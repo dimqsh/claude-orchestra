@@ -115,6 +115,13 @@ the board, so the next run has history for it. At the end of the report, suggest
 available models` means no hand can take a task: stop and tell the user to run
 `/orchestra:setup`.
 
+**Nothing ranked.** When `brief` ranks no model for any type and prints no `untested:` line (every
+model skipped, no Artificial Analysis key), choose by your own judgment among the available hands
+in `~/.claude/orchestra/models.json`: entries with `available.ok` true, provider `codex` or
+`claude`, never `opus`, `fable` only with `allowFable`. Write `no evidence` in the plan table's
+why column. End the report by suggesting the Artificial Analysis key or the `bench --models`
+command.
+
 ## Hands
 
 | Who | How |
