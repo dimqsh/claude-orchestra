@@ -30,6 +30,6 @@ test('board CLI works in a directory with a very long path', () => {
   board('init', 'long path');
   board('add', '1', 'task', '--exec', 'codex');
   board('set', '1', 'running');
-  assert.equal(JSON.parse(board('json')).tasks[0].attempts, 1);
+  assert.equal(JSON.parse(board('json')).tasks[0].attempts.length, 1);
   assert.match(board('show', '--width', '100'), /#1 task/);
 });

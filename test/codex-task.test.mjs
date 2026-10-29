@@ -84,8 +84,8 @@ for (const location of ['today', 'yesterday', 'archive']) {
     const writes = [];
     async function current() {
       if (!jobPath) {
-        for (const file of await readdir(join(home, 'codex-jobs')).catch(() => [])) {
-          if (file.startsWith('cx-') && file.endsWith('.json')) { jobPath = join(home, 'codex-jobs', file); break; }
+        for (const file of await readdir(join(home, 'jobs')).catch(() => [])) {
+          if (file.startsWith('cx-') && file.endsWith('.json')) { jobPath = join(home, 'jobs', file); break; }
         }
       }
       if (!jobPath) return null;
