@@ -286,6 +286,17 @@ test('one own pass without public data uses the neutral prior and cannot leapfro
   assert.equal(rows.at(-1).id, 'codex:best');
 });
 
+test('an even-sized cohort prints its neutral prior rounded to one decimal while the score stays exact', t => {
+  const f = fixture(t);
+  const unknown = entry('codex', 'unknown', null, 0.5, { public: null,
+    own: { byType: { bug: { passed: 1, total: 1 } } } });
+  const input = catalog(unknown, entry('claude', 'a', 61.3, 0.1), entry('gemini', 'b', 70.1, 2));
+  const row = f.run(`r.ladder('bug', ${JSON.stringify(input)}, {}, {})`).find(row => row.id === unknown.id);
+  assert.match(row.score.evidence, /neutral prior 65\.7$/);
+  // The score keeps the unrounded median: 61.3 and 70.1 average to 65.69999999999999.
+  assert.equal(row.score.value, (4 * ((61.3 + 70.1) / 2) + 100) / 5);
+});
+
 test('one primary public metric prevents a lone SWE-bench figure from outranking AA evidence', t => {
   const f = fixture(t);
   const lone = entry('gemini', 'swe-only', null, 0.5, {

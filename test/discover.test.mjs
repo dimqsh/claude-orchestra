@@ -251,6 +251,19 @@ test('models dispatcher rejects unknown commands and options with a single Engli
   assert.equal(f.calls().length, 0);
 });
 
+test('models bench runs the benchmark CLI in a child process and returns its exit code', t => {
+  const f = setup(t);
+  f.seed({ models: { 'codex:sample': { id: 'codex:sample', provider: 'codex', model: 'sample', available: { ok: true }, own: null } } });
+  const estimate = spawnSync(process.execPath, [cli, 'bench', '--estimate'], { env: f.env, encoding: 'utf8' });
+  assert.equal(estimate.status, 0, estimate.stderr);
+  assert.equal(estimate.stdout, 'codex:sample: 150000 tokens per model (budget estimate)\n');
+  assert.equal(estimate.stderr, '');
+  const bare = spawnSync(process.execPath, [cli, 'bench'], { env: f.env, encoding: 'utf8' });
+  assert.equal(bare.status, 1); assert.equal(bare.stdout, '');
+  assert.equal(bare.stderr, 'Error: Usage: bench --models a,b | --new | --estimate | --skip a,b\n');
+  assert.equal(f.calls().length, 0);
+});
+
 test('Codex probes end stdin so the CLI can reach stdin EOF', t => {
   const f = setup(t);
   const out = f.run(`
