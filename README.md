@@ -130,7 +130,7 @@ run.
 | `models.mjs brief [--types a,b]` | Prints the ranking Opus reads: up to three rungs per task type, at most 20 lines. |
 | `models.mjs bench --estimate` | Lists the models the own benchmark can run and its token cap. |
 | `models.mjs bench --models a,b` | Runs the own benchmark for the models you name. |
-| `models.mjs bench --skip a,b` | Marks models as not picked; they never run automatically. A model that already has benchmark results is kept (`kept (already benchmarked)`). |
+| `models.mjs bench --skip a,b` | Marks models as not picked; they never run automatically. A model that already has per-type results is kept (`kept (already benchmarked)`); one with only a runner error is marked skipped. |
 | `models.mjs bench --new` | Benchmarks models nobody has run yet. The orchestrate skill starts it in the background after a run; it does nothing without `benchAuto: true`. |
 
 An example of what `brief` prints (made-up numbers):
@@ -158,6 +158,8 @@ Limits: claude unknown · codex unknown · gemini unknown · kimi unknown
 
 For such a type Opus picks a hand from the untested models by its own judgment, marks it
 `untested` in the plan and suggests `/orchestra:setup` or `bench` at the end of its report.
+Models you skipped never appear on the `untested:` line. Without the line, Opus picks among the
+models that other types rank.
 
 **Score.** Each model gets a score from 0 to 100 per task type. The prior is one public metric
 per type, the one most candidates have (ties go to the Artificial Analysis coding index, then
@@ -167,15 +169,19 @@ history tasks of that type, the history's first-try rate is the score. Below tha
 `(1 - w) * prior + w * pass rate` with `w = n / (n + 4)`.
 
 **Cost class.** `$` to `$$$$`, from the Artificial Analysis price blended 3:1 input to output.
-Without a price the class is the provider's default: Claude `$$`, Codex `$$$`, Gemini `$`, Kimi
-`$$`. Without an Artificial Analysis key no model has a price, so every class is the provider's.
+Without a price the class is the model's own default (`claude:haiku` `$`, `claude:sonnet` `$$`,
+`claude:fable` `$$$`), and for any other model the provider's: Claude `$$`, Codex `$$$`, Gemini
+`$`, Kimi `$$`. Without an Artificial Analysis key no model has a price, so Haiku, Sonnet and
+Fable keep their own classes and every Codex model is `$$$`.
 
 **Ladder.** Rung 1 is the cheapest candidate that scores at least 85% of the best, skipping
 providers marked `low limit` (above 90% of any limit window). Rung 2 is the next candidate that
-scores at least 5 points higher, or sits in a higher cost class and scores higher. Rung 3 is the
-best score. Rung 1 runs at medium effort, rungs 2 and 3 at high (the nearest the model supports).
-Opus starts a subtask at rung 1; a risky one starts higher. When a subtask fails, it climbs the
-rungs, and the last step re-runs rung 3 at its top effort.
+scores at least 5 points higher, or sits in a higher cost class and scores at least as much as
+rung 1. Rung 3 is the best score; when scores tie, the candidate in the higher cost class wins,
+then the one with the higher prior, then the lower id. Three equal own results give three rungs,
+cheapest first. Rung 1 runs at medium effort, rungs 2 and 3 at high (the nearest the model
+supports). Opus starts a subtask at rung 1; a risky one starts higher. When a subtask fails, it
+climbs the rungs, and the last step re-runs rung 3 at its top effort.
 
 **Own benchmark.** Six tiny fixture repositories (bug, logic, refactor, tests, docs and a
 multi-file change that counts as a second refactor sample) each have a hidden check script.
@@ -250,7 +256,7 @@ Bash limit. Opus reviews sub-tasks like any other task.
 - Tokens and activity come from the Claude Code transcripts in `~/.claude/projects` and from the job files in `~/.claude/orchestra/jobs`, which carry a `provider` field. Older Codex jobs in `~/.claude/orchestra/codex-jobs` are still read. The plugin only reads the transcripts.
 - Codex runs through `codex exec --json`, with `--model` and `--effort` from the plan. The runner reads its events for the current command and tails the rollout file for live token counts.
 - Limits: the status line writes Claude's 5-hour and weekly windows to `~/.claude/orchestra/limits.json` once a minute. Codex's come from the newest rollout file. Gemini and Kimi are unknown.
-- The status line scripts are copied to `~/.claude/orchestra` together with `lib/` and `data/` (the model alias table and provider cost classes), so they keep working when the plugin cache moves. A session-start hook keeps the copy current.
+- The status line scripts are copied to `~/.claude/orchestra` together with `lib/` and `data/` (the model alias table and the model and provider cost classes), so they keep working when the plugin cache moves. A session-start hook keeps the copy current.
 - The web server binds to `127.0.0.1` only and pushes updates over SSE. Open `?mock=1` for a demo without real sessions.
 - Module boundaries and data formats are specified in [`docs/CONTRACT.md`](docs/CONTRACT.md).
 
