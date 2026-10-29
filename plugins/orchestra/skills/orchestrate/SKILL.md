@@ -73,10 +73,12 @@ cost class. Claude models have no effort, so none is printed. `low limit` marks 
 
 - **Rung 1:** the cheapest candidate that scores at least 85% of the best, skipping providers marked `low limit`. Effort medium.
 - **Rung 2:** the next candidate that scores at least 5 points higher than rung 1, or sits in a higher cost class and scores at least as much as rung 1. Effort high.
-- **Rung 3:** the best score. On a tie the candidate in the higher cost class wins, then the one with the higher prior, then the lower id. Effort high.
+- **Rung 3:** the best score. On a tie the candidate in the higher cost class wins, then the one with the higher prior, then the one the provider lists first. Effort high.
 
-Equal scores are normal while the own benchmark is the only evidence: three models with the same
-result give three rungs, cheapest first.
+Equal scores are normal while the own benchmark is the only evidence. Three tied models in three
+different cost classes give three rungs, cheapest first. When tied models share a cost class, the
+top rung is the one the provider lists first (Codex lists its newest flagship first), because
+routing keeps the provider's listing order on a full tie.
 
 Effort is the nearest one the model supports. Use the effort the ranking prints.
 
@@ -105,20 +107,21 @@ search no evidence yet
 untested: claude:haiku, claude:sonnet, codex:gpt-5.6-terra, codex:gpt-6.1-sol (models.mjs bench --models claude:haiku,claude:sonnet,codex:gpt-5.6-terra,codex:gpt-6.1-sol)
 Limits: claude unknown · codex unknown · gemini unknown · kimi unknown
 ```
-Some types can be empty while others have rungs: `search` has no own-benchmark fixture, so
-without public data it stays empty until board history builds up. For an empty type, pick the
-hand yourself from the `untested:` line, model and effort by your own judgment, and write
-`untested: <your reason>` in the plan table's why column. Skipped models never appear on that line.
-With no `untested:` line, choose among the models the other types rank. The hand's attempts go on
-the board, so the next run has history for it. At the end of the report, suggest
-`/orchestra:setup` or the `bench --models` command from the `untested:` line. `<type> no
-available models` means no hand can take a task: stop and tell the user to run
-`/orchestra:setup`.
+Some types can be empty while others have rungs: `search` has no own-benchmark fixture, so without
+public data it stays empty until board history builds up. For an empty type, pick the hand yourself
+from the `untested:` line, model and effort by your own judgment, and write `untested: <your
+reason>` in the plan table's why column. Skipped models never appear on that line. With no
+`untested:` line, choose among the models the other types rank (when no type ranks any, see Nothing
+ranked below). The hand's attempts go on the board, so the next run has history for it. At the end
+of the report, suggest `/orchestra:setup` or the `bench --models` command from the `untested:` line.
+`<type> no available models` means no eligible hand exists at all (no available Claude or Codex
+model), not that every model was skipped: stop and tell the user to run `/orchestra:setup`.
 
-**Nothing ranked.** When `brief` ranks no model for any type and prints no `untested:` line (every
-model skipped, no Artificial Analysis key), choose by your own judgment among the available hands
-in `~/.claude/orchestra/models.json`: entries with `available.ok` true, provider `codex` or
-`claude`, never `opus`, `fable` only with `allowFable`. Write `no evidence` in the plan table's
+**Nothing ranked.** When `brief` prints `<type> no evidence yet` for every type and no `untested:`
+line (every model skipped, no Artificial Analysis key), choose by your own judgment among the
+available hands in `models.json` in the orchestra data folder (`~/.claude/orchestra`, or
+`ORCHESTRA_HOME`): entries with `available.ok` true, provider `codex` or `claude`, never `opus`,
+`fable` only with `allowFable`. Write `no evidence` in the plan table's
 why column. End the report by suggesting the Artificial Analysis key or the `bench --models`
 command.
 

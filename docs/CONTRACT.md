@@ -327,9 +327,11 @@ the job's `provider`, `codex` when the field is missing, `model` = the job's mod
 `web/index.html`: single self-contained file (inline CSS/JS/SVG, no external requests, works
 offline). Consumes `/events` (fallback: poll `/api/snapshot` every 2 s). `?mock=1` loads
 `mock-snapshot.json` and animates it (tokens grow, statuses advance) for demos. `mock-snapshot.json`
-must validate against section 7 and contain 2 sessions (two projects), one with a board of 7 tasks
-across codex/sonnet/haiku including a rework and a failed attempt. An escalation goes to Codex
-(`gpt-6.1-sol`), never to Opus, because Opus is never a hand.
+must validate against section 7 and contain 5 sessions, one with a board of 7 tasks (one a Codex
+sub-task). The board's tasks run on codex and sonnet, one task is on kimi and shows as Other, and
+haiku appears only as the failed first attempt of the task that escalates. That escalation goes to
+Codex (`gpt-6.1-sol`), never to Opus, because Opus is never a hand. The board has a rework and a
+failed attempt.
 
 ---
 
@@ -762,8 +764,8 @@ price per class when there is none), then higher score, then id. A provider abov
 window is `low limit`: still listed, skipped for rung 1.
 - Rung 1: the cheapest candidate that scores at least 85% of the best score and is not `low limit`.
 - Rung 2: the next candidate that scores at least 5 points higher than rung 1, or sits in a higher cost class (any higher class) and scores at least as much as rung 1.
-- Rung 3: the best-scoring candidate. When scores tie, the best is the candidate in the higher cost class, then the one with the higher prior, then the one with the lower id. A rung is left out when no candidate fits it or when the model is already on an earlier rung.
-- Three equal own results (say 1/1 for `claude:haiku`, `claude:sonnet` and a Codex model) therefore give three rungs, cheapest first.
+- Rung 3: the best-scoring candidate. When scores tie, the best is the candidate in the higher cost class, then the one with the higher prior, then the one the provider lists first. A rung is left out when no candidate fits it or when the model is already on an earlier rung.
+- Three tied models in three different cost classes (say 1/1 for `claude:haiku`, `claude:sonnet` and a Codex model) give three rungs, cheapest first. When tied models share a cost class, the top rung is the one the provider lists first (Codex lists its newest flagship first), because routing keeps the provider's listing order on a full tie.
 - Effort: rung 1 medium, rungs 2 and 3 high, each the nearest level the model supports. When rung 1 is also the best candidate, it runs at `high`. Claude models have no effort.
 - Opus starts a subtask at rung 1 unless it is risky. Escalation climbs the rungs. The last step re-runs rung 3 at its top supported effort: the last value of that entry's `efforts` array in `models.json`. A Claude entry has no efforts, so for it the last step is a plain re-run.
 
@@ -783,8 +785,9 @@ for BenchLM, or `no public data · neutral prior <n>`, which means the model has
 ladder's primary metric and takes the median of the other candidates. The numbers above are made
 up.
 
-A type with no candidate that has evidence prints `<type> no evidence yet`. With no eligible model
-at all it prints `<type> no available models`. After the type lines and before `Limits:`, one line
+A type with no candidate that has evidence prints `<type> no evidence yet`, also when every model
+is skipped and nothing is ranked (then there is no `untested:` line either). `<type> no available
+models` means no eligible hand at all. After the type lines and before `Limits:`, one line
 lists the models that are untested for every type shown, each once, with the command that would
 test them, and is left out when empty. Skipped models (`own.skipped`) never appear on it:
 ```
@@ -813,7 +816,7 @@ without any result.
   ] }
 ```
 - `board set <id> running` opens attempt `n` (the count so far plus one) with the task's current provider, model and effort, unless one is already open. `done` closes it as `accepted`, `rework` as `rework`, `failed` as `failed`.
-- `tokens` of an attempt: the spent tokens of all agents and jobs carrying the task id now, minus the tokens of earlier attempts; `null` when an earlier attempt is `null` or nothing is linked to the task, and a negative difference is stored as `null`. `board set` computes the tokens before it re-reads and writes the board, so concurrent board commands do not lose updates.
+- `tokens` of an attempt: the spent tokens of all agents and jobs carrying the task id now, minus the tokens of earlier attempts; `null` when an earlier attempt is `null` or nothing is linked to the task, and a negative difference is stored as `null`. `board set` computes tokens before it re-reads and writes, so a verdict no longer overwrites a concurrent update.
 - `board exec <id> <provider> --model <m> --effort <e>` changes the task's current hand. Run it after `set rework` and before `set running`, so the failed attempt keeps its own model. It sets `model` and `effort` to null when they are omitted.
 - Snapshot additions (section 7): `Task.type`, `Task.model`, `Task.effort`, `Task.attemptCount` (number of attempts) and `Task.attemptList` (the records). A job's `Agent.executor` is its `provider`.
 - The status line and the ASCII board show the open attempt's model and effort in place of the executor name (glossary, section 16).
@@ -827,5 +830,5 @@ without any result.
 - Sub-agents only when the agent brief allows them and names the sub-agent's model and effort: the cheapest Codex line of `models.mjs brief` for the type of the hard part. With no Codex line, no sub-agent. A hand never picks a model. A sub-agent is always Codex, one level deep.
 - Escalation: a rung gets two attempts, the first and one rework. Then the next rung; after rung 3, rung 3 once more at its top supported effort (the last value of the entry's `efforts` array; a plain re-run for a Claude entry); then `failed`. `board exec` takes `--effort` for Codex hands only.
 - A type with `no evidence yet`: Opus picks the hand itself from the `untested:` line (skipped models never appear there; with no line, Opus picks among the models other types rank), model and effort by its own judgment, and writes `untested: <reason>` in the plan's why column. At the end of the report it suggests `/orchestra:setup` or the `bench --models` command from that line. Board attempts of that hand become history for the next run.
-- Nothing ranked: when `brief` ranks no model for any type and prints no `untested:` line (every model skipped, no Artificial Analysis key), Opus chooses by its own judgment among the available hands in `models.json` (`available.ok`, provider `codex` or `claude`, never `opus`, `fable` only with `allowFable`), writes `no evidence` in the why column and ends the report by suggesting the Artificial Analysis key or `bench --models`.
+- Nothing ranked: when `brief` prints `<type> no evidence yet` for every type and no `untested:` line (every model skipped, no Artificial Analysis key), Opus chooses by its own judgment among the available hands in `models.json` in the orchestra data folder (`~/.claude/orchestra`, or `ORCHESTRA_HOME`; `available.ok`, provider `codex` or `claude`, never `opus`, `fable` only with `allowFable`), writes `no evidence` in the why column and ends the report by suggesting the Artificial Analysis key or `bench --models`.
 - Last command of a run, after `board finish`: `models.mjs bench --new` in the background. It does nothing without `benchAuto` or new models.
