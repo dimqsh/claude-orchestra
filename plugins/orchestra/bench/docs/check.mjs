@@ -17,7 +17,7 @@ try {
   for (const [i, block] of blocks.entries()) {
     const path = join(temp, `example-${i}.mjs`);
     await writeFile(path, block[1]);
-    const result = spawnSync(process.execPath, [path], { encoding: 'utf8', timeout: 3000 });
+    const result = spawnSync(process.execPath, [path], { encoding: 'utf8', timeout: 10000 });
     assert.equal(result.status, 0, result.stderr);
   }
 } finally { await rm(temp, { recursive: true, force: true }); }

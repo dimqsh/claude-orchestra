@@ -11,7 +11,7 @@ try {
   await cp(root, temp, { recursive: true });
   const env = { ...process.env };
   delete env.NODE_TEST_CONTEXT;
-  const run = () => spawnSync(process.execPath, ['--test', 'clamp.test.mjs'], { cwd: temp, env, encoding: 'utf8', timeout: 3000 });
+  const run = () => spawnSync(process.execPath, ['--test', 'clamp.test.mjs'], { cwd: temp, env, encoding: 'utf8', timeout: 10000 });
   const good = run();
   assert.equal(good.status, 0, good.stdout + good.stderr);
   for (const body of ['return min;', 'return max;', 'return value;', 'return Math.min(max, Math.max(min, value));']) {

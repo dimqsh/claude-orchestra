@@ -90,7 +90,7 @@ function effort(entry, rung, onlyBest) {
     order.slice(target + 1).find(value => efforts.includes(value)) || null;
 }
 
-function eligibleEntries(catalog) {
+export function eligibleEntries(catalog) {
   const fableAllowed = allowFable();
   return Object.values(catalog.models).filter(entry => {
     const identities = [entry.id, entry.model, entry.resolved].filter(Boolean).join(' ');
@@ -123,11 +123,10 @@ export function ladder(type, catalog, limits, history = {}) {
   const price = row => blendedPrice(row.entry) ?? [0.5, 3, 10, 20][row.cost.length - 1];
   const cheapest = (a, b) => a.cost.length - b.cost.length || price(a) - price(b) ||
     b.score.value - a.score.value || a.id.localeCompare(b.id);
-  candidates.sort(cheapest);
   const best = [...candidates].sort((a, b) => b.score.value - a.score.value ||
-    b.cost.length - a.cost.length || prior(b.entry, context).value - prior(a.entry, context).value ||
-    a.id.localeCompare(b.id))[0];
+    b.cost.length - a.cost.length || prior(b.entry, context).value - prior(a.entry, context).value)[0];
   if (!best) return [];
+  candidates.sort(cheapest);
   const rows = [];
   const add = (candidate, rung) => rows.push({ rung, id: candidate.id,
     effort: effort(candidate.entry, rung, candidate === best && rung === 1), score: candidate.score,

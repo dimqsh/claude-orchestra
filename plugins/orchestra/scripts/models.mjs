@@ -7,19 +7,20 @@ const commands = {
     const { readCatalog, TASK_TYPES } = await import('../lib/catalog.mjs');
     const { readLimits } = await import('../lib/limits.mjs');
     const { history } = await import('../lib/collect.mjs');
-    const { ladder, untested } = await import('../lib/route.mjs');
+    const { ladder, untested, eligibleEntries } = await import('../lib/route.mjs');
     const usage = 'Usage: models.mjs brief [--types bug,docs]';
     if (args.length && (args.length !== 2 || args[0] !== '--types')) throw new Error(usage);
     const types = args.length ? [...new Set(args[1].split(','))] : TASK_TYPES;
     if (!types.length || types.some(type => !TASK_TYPES.includes(type))) throw new Error(usage);
     const [catalog, limits, past] = await Promise.all([readCatalog(), readLimits(), history()]);
+    const hasEligibleModels = eligibleEntries(catalog).length > 0;
     const lines = [];
     let fullyUntested;
     for (const type of types) {
       const rows = ladder(type, catalog, limits, past);
       const pending = new Set(untested(type, catalog, limits, past));
       fullyUntested = new Set(fullyUntested === undefined ? pending : [...fullyUntested].filter(id => pending.has(id)));
-      if (!rows.length) lines.push(`${type} ${pending.size ? 'no evidence yet' : 'no available models'}`);
+      if (!rows.length) lines.push(`${type} ${hasEligibleModels ? 'no evidence yet' : 'no available models'}`);
       for (const row of rows) lines.push(`${type} ${row.rung}. ${row.id}${row.effort ? `@${row.effort}` : ''} · ${Math.round(row.score.value)} · ${row.score.evidence} · ${row.cost}${row.lowLimit ? ' · low limit' : ''}`);
     }
     if (fullyUntested.size) {

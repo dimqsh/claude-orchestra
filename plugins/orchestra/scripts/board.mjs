@@ -117,7 +117,11 @@ export async function runBoard(argv = process.argv.slice(2)) {
       if (open) tokens = await attemptTokens(board, task, open, cwd);
     }
     // Token collection does I/O. Re-read afterwards, then keep the transition and write synchronous.
-    board = JSON.parse(readFileSync(path, 'utf8'));
+    try { board = JSON.parse(readFileSync(path, 'utf8')); }
+    catch (error) {
+      if (error.code === 'ENOENT') throw new Error('Board not found: run init');
+      throw error;
+    }
     const task = board.tasks.find(task => task.id === id);
     if (!task) throw new Error(`Task #${id} not found`);
     if (command === 'set') {
