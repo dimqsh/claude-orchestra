@@ -3,11 +3,11 @@
 //
 //   install-hud.mjs install|uninstall|status|sync [--dry-run] [--quiet]
 //
-// install:   copy ../lib and ../hud to <ORCHESTRA_HOME>, point statusLine and
+// install:   copy ../lib, ../hud and ../data to <ORCHESTRA_HOME>, point statusLine and
 //            subagentStatusLine at them, remember the previous statusLine as a chain.
 // uninstall: restore the previous statusLine, drop ours. Files in ORCHESTRA_HOME stay.
 // status:    report the current state.
-// sync:      re-copy lib/ and hud/ if already installed; never touches settings.json.
+// sync:      re-copy lib/, hud/ and data/ if already installed; never touches settings.json.
 
 import fs from 'node:fs';
 import os from 'node:os';
@@ -20,7 +20,7 @@ const settingsPath = path.join(claudeConfigDir, 'settings.json');
 const configPath = path.join(orchestraHome, 'config.json');
 
 const pluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const RUNTIME_DIRS = ['lib', 'hud'];
+const RUNTIME_DIRS = ['lib', 'hud', 'data'];
 
 const statusScript = path.join(orchestraHome, 'hud', 'statusline.mjs');
 const subagentScript = path.join(orchestraHome, 'hud', 'subagent-rows.mjs');
@@ -152,7 +152,7 @@ function install() {
     if (cfg.chainOriginal && cfg.chainOriginal !== config.chainOriginal) {
       out(`The existing status line will be saved to ${configPath} and run first (chain).`);
     }
-    out(`lib/ and hud/ will be copied to ${orchestraHome}.`);
+    out(`lib/, hud/ and data/ will be copied to ${orchestraHome}.`);
     out('Nothing was changed.');
     return;
   }

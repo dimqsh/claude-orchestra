@@ -1,9 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 const benchmarksUrl = new URL('../plugins/orchestra/lib/benchmarks.mjs', import.meta.url).href;
 const catalogUrl = new URL('../plugins/orchestra/lib/catalog.mjs', import.meta.url).href;
@@ -55,6 +56,51 @@ function setup(t, seed = { models: models() }) {
   };
   return { root, store, env, child, run };
 }
+
+function copyPlugin(f) {
+  const plugin = join(f.root, 'plugin');
+  for (const dir of ['lib', 'scripts', 'data']) {
+    cpSync(new URL(`../plugins/orchestra/${dir}`, import.meta.url), join(plugin, dir), { recursive: true });
+  }
+  return plugin;
+}
+
+test('missing or malformed aliases never break matching or models discover', t => {
+  for (const content of [undefined, '{ malformed', 'null', '{"aliases":null}', '{"aliases":[]}', '{"aliases":{"sonnet-5-5":{"toString":null}}}']) {
+    const f = setup(t, { discoveredAt: new Date().toISOString(), models: models() });
+    const plugin = copyPlugin(f);
+    const aliasPath = join(plugin, 'data/model-aliases.json');
+    if (content === undefined) rmSync(aliasPath);
+    else writeFileSync(aliasPath, content);
+    const out = spawnSync(process.execPath, ['--input-type=module', '-e', `
+      import { matchModel } from ${JSON.stringify(pathToFileURL(join(plugin, 'lib/benchmarks.mjs')).href)};
+      import { readCatalog } from ${JSON.stringify(pathToFileURL(join(plugin, 'lib/catalog.mjs')).href)};
+      const catalog = await readCatalog();
+      console.log(JSON.stringify([matchModel('GPT-6.1 Sol', 'OpenAI', catalog), matchModel('Sonnet 5.5', 'Anthropic', catalog)]));
+      process.argv = [process.execPath, 'models.mjs', 'discover'];
+      await import(${JSON.stringify(pathToFileURL(join(plugin, 'scripts/models.mjs')).href)});
+    `], { env: f.env, encoding: 'utf8' });
+    assert.equal(out.status, 0, out.stderr); assert.equal(out.stderr, '');
+    assert.equal(out.stdout, '["codex:gpt-6.1-sol",null]\nadded: \nunavailable: \n');
+  }
+});
+
+test('aliases load lazily and only the aliases key supplies mappings', t => {
+  const f = setup(t);
+  const plugin = copyPlugin(f);
+  const aliasPath = join(plugin, 'data/model-aliases.json');
+  writeFileSync(aliasPath, '{}');
+  const out = spawnSync(process.execPath, ['--input-type=module', '-e', `
+    import { writeFileSync } from 'node:fs';
+    import { matchModel } from ${JSON.stringify(pathToFileURL(join(plugin, 'lib/benchmarks.mjs')).href)};
+    import { readCatalog } from ${JSON.stringify(pathToFileURL(join(plugin, 'lib/catalog.mjs')).href)};
+    writeFileSync(${JSON.stringify(aliasPath)}, JSON.stringify({ aliases: { 'sonnet-5-5': 'claude-sonnet-5-5' }, 'gpt-6-sol': 'gpt-6.1-sol' }));
+    const catalog = await readCatalog();
+    console.log(JSON.stringify([matchModel('Sonnet 5.5', 'Anthropic', catalog), matchModel('GPT-6 Sol', 'OpenAI', catalog)]));
+  `], { env: f.env, encoding: 'utf8' });
+  assert.equal(out.status, 0, out.stderr); assert.equal(out.stderr, '');
+  assert.deepEqual(JSON.parse(out.stdout), ['claude:sonnet', null]);
+});
 
 // All environment-dependent imports run in isolated children; the directory suite shares one process.
 test('AA data fills codingIndex, livecodebench, price and speed with source and date', t => {
@@ -149,6 +195,27 @@ test('a recent complete catalog skips; force, seven days, and missing public ref
   const missing = f.run('await c.updateCatalog(x => { x.models["codex:new"] = { provider: "codex", model: "new", public: null }; }); const result = await b.refreshBenchmarks({ fetch: fakeFetch, key: "test-key" });');
   assert.equal(missing.calls.length, 2);
 });
+
+for (const failure of [{ aaStatus: 429 }, { network: 'both' }]) {
+  test(`new models stay unchecked after ${JSON.stringify(failure)} so the next refresh retries`, t => {
+    const benchmarksAt = new Date(Date.now() - 2 * 86400000).toISOString();
+    const f = setup(t, { benchmarksAt, models: {
+      'codex:gpt-6.1-sol': entry('codex', 'gpt-6.1-sol'),
+      'claude:sonnet': entry('claude', 'sonnet', { resolved: 'claude-sonnet-5-5', public: null }),
+      'codex:known': entry('codex', 'known', { public: oldPublic }),
+    } });
+    const failed = f.run('', failure);
+    assert.equal(failed.calls.length, 2);
+    assert.equal(Object.hasOwn(failed.catalog.models['codex:gpt-6.1-sol'], 'public'), false);
+    assert.equal(failed.catalog.models['claude:sonnet'].public, null);
+    assert.deepEqual(failed.catalog.models['codex:known'].public, oldPublic);
+    assert.equal(failed.catalog.benchmarksAt, benchmarksAt);
+    const retried = f.run();
+    assert.equal(retried.calls.length, 2, 'a recent benchmarksAt must not suppress retries for unchecked entries');
+    assert.equal(retried.catalog.models['codex:gpt-6.1-sol'].public.source, 'artificialanalysis.ai');
+    assert.equal(retried.catalog.models['claude:sonnet'].public.source, 'artificialanalysis.ai');
+  });
+}
 
 test('BenchLM HTTP, network and format failures preserve its last good data and date', t => {
   for (const failure of [{ benchStatus: 429 }, { network: 'both' }, { benchText: '# Changed layout' }]) {
