@@ -7,5 +7,7 @@
   },
   "dependencies": [
     "oh-my-claudecode@omc"
-  ]
+  ],
+  "license": "MIT",
+  "repository": "https://github.com/dimqsh/claude-orchestra"
 }

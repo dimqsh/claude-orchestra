@@ -8,6 +8,7 @@
 ![Node.js](https://img.shields.io/badge/Node.js->=20-3c873a?style=flat-square)
 ![Codex CLI](https://img.shields.io/badge/Codex_CLI->=0.165-10A37F?style=flat-square)
 [![Requires oh-my-claudecode](https://img.shields.io/badge/requires-oh--my--claudecode-7C6CF2?style=flat-square)](https://github.com/Yeachan-Heo/oh-my-claudecode)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue?style=flat-square)](LICENSE)
 
 [Features](#features) • [Getting started](#getting-started) • [Usage](#usage) • [How it works](#how-it-works) • [Troubleshooting](#troubleshooting)
 
