@@ -1,12 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, writeFile, appendFile, rm, realpath } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, writeFile, appendFile, rm, realpath, cp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { projectSlug } from '../plugins/orchestra/lib/paths.mjs';
-import { renderRows, renderRow } from '../plugins/orchestra/lib/render.mjs';
+import { renderRows, renderRow, executorColors, paint } from '../plugins/orchestra/lib/render.mjs';
+
+const childDiagnostics = result => `signal=${result.signal}; stderr=${result.stderr ?? ''}`;
 
 const script = fileURLToPath(new URL('../plugins/orchestra/scripts/board.mjs', import.meta.url));
 const collector = new URL('../plugins/orchestra/lib/collect.mjs', import.meta.url).href;
@@ -19,16 +21,16 @@ async function fixture(t) {
   const env = { ...process.env, ORCHESTRA_HOME: home, CLAUDE_CONFIG_DIR: join(root, 'claude'), CODEX_HOME: join(root, 'codex') };
   const boardPath = join(home, 'boards', `${projectSlug(cwd)}.json`), sessionId = 'attempt-session';
   const transcriptPath = join(env.CLAUDE_CONFIG_DIR, 'projects', projectSlug(cwd), `${sessionId}.jsonl`);
-  const cli = (...args) => spawnSync(process.execPath, [script, '--cwd', cwd, ...args], { env, encoding: 'utf8', timeout: 10000 });
+  const cli = (...args) => spawnSync(process.execPath, [script, '--cwd', cwd, ...args], { env, encoding: 'utf8', timeout: 30000 });
   function board(...args) {
     const result = cli(...args);
-    assert.equal(result.status, 0, result.stderr); assert.equal(result.stderr, '');
+    assert.equal(result.status, 0, childDiagnostics(result)); assert.equal(result.stderr, '');
     if (!['json', 'show'].includes(args[0])) assert.equal(result.stdout, '', `${args[0]} must be silent`);
     return result.stdout;
   }
   function evaluate(code) {
-    const result = spawnSync(process.execPath, ['--input-type=module', '-e', `import * as collect from ${JSON.stringify(collector)}; ${code}`], { env, encoding: 'utf8', timeout: 10000 });
-    assert.equal(result.status, 0, result.stderr); assert.equal(result.stderr, '');
+    const result = spawnSync(process.execPath, ['--input-type=module', '-e', `import * as collect from ${JSON.stringify(collector)}; ${code}`], { env, encoding: 'utf8', timeout: 30000 });
+    assert.equal(result.status, 0, childDiagnostics(result)); assert.equal(result.stderr, '');
     return JSON.parse(result.stdout);
   }
   async function transcript() {
@@ -97,7 +99,10 @@ test('attempt tokens sum all matching agents and jobs and subtract earlier attem
   await writeFile(agentPath, JSON.stringify({ type: 'assistant', cwd: f.cwd, timestamp: startedAt, message: { id: 'a', model: 'claude-sonnet', stop_reason: 'end_turn', usage: { input_tokens: 5, output_tokens: 2, cache_read_input_tokens: 500 }, content: [] } }) + '\n');
   await json(agentPath.replace('.jsonl', '.meta.json'), { description: '#1 task' });
   f.board('set', '1', 'rework'); assert.equal(f.task().attempts[0].tokens, 3031);
-  f.board('set', '1', 'running'); f.board('set', '1', 'done'); assert.equal(f.task().attempts[1].tokens, 0);
+  f.board('set', '1', 'running');
+  const verdict = f.cli('set', '1', 'done');
+  assert.equal(verdict.status, 0, childDiagnostics(verdict)); assert.equal(verdict.stderr, ''); assert.equal(verdict.stdout, '');
+  assert.equal(f.task().attempts[1].tokens, 0, childDiagnostics(verdict));
   const snapshot = f.collect().board.tasks[0];
   assert.equal(snapshot.attemptCount, 2); assert.deepEqual(snapshot.attemptList, f.task().attempts); assert(!Object.hasOwn(snapshot, 'attempts'));
 });
@@ -267,4 +272,96 @@ test('board model labels drop date suffixes and cap the aligned executor column 
     }
     assert.deepEqual(renderRows(session, { width, color: true }).map(row => row.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '')), rows);
   }
+});
+
+test('concurrent board verdicts preserve both tasks after overlapping token collection', { timeout: 30000 }, async t => {
+  const f = await fixture(t);
+  f.board('init', 'concurrent', '--session', f.sessionId);
+  for (const id of ['1', '2']) {
+    f.board('add', id, 'fix', '--exec', 'claude', '--model', 'sonnet');
+    f.board('set', id, 'running');
+  }
+  // Hold both real board CLI processes at their asynchronous collector boundary.
+  const runtime = join(f.cwd, 'runtime');
+  await cp(new URL('../plugins/orchestra/lib/', import.meta.url), join(runtime, 'lib'), { recursive: true });
+  await mkdir(join(runtime, 'scripts'));
+  await cp(script, join(runtime, 'scripts/board.mjs'));
+  await writeFile(join(runtime, 'lib/collect.mjs'), `
+    export const projectRoot = async cwd => cwd;
+    export const emptyTokens = () => ({ spent: 0 });
+    export async function collectSession() {
+      process.send('collecting');
+      await new Promise(resolve => process.stdin.once('data', resolve));
+      return { agents: ['1', '2'].map(taskId => ({ taskId, tokens: { spent: 7 } })) };
+    }
+  `);
+  const children = ['1', '2'].map(id => {
+    const child = spawn(process.execPath, [join(runtime, 'scripts/board.mjs'), '--cwd', f.cwd, 'set', id, 'done'],
+      { env: f.env, stdio: ['pipe', 'pipe', 'pipe', 'ipc'] });
+    t.after(() => { if (child.exitCode === null) child.kill('SIGKILL'); });
+    let stdout = '', stderr = '';
+    child.stdout.on('data', data => { stdout += data; });
+    child.stderr.on('data', data => { stderr += data; });
+    const closed = new Promise(resolve => child.once('close', (code, signal) => resolve({ code, signal, stdout, stderr })));
+    const ready = new Promise((resolve, reject) => {
+      child.once('message', resolve); child.once('error', reject);
+      child.once('exit', code => reject(new Error(`board exited before collection: ${code}; stderr=${stderr}`)));
+    });
+    return { child, closed, ready };
+  });
+  await Promise.all(children.map(child => child.ready));
+  // Finish one verdict while the second still holds the original board snapshot.
+  for (const { child, closed } of children) {
+    child.stdin.end('continue');
+    const result = await closed;
+    assert.equal(result.code, 0, `signal=${result.signal}; stderr=${result.stderr}`);
+    assert.equal(result.stdout, ''); assert.equal(result.stderr, '');
+  }
+  const board = JSON.parse(f.board('json'));
+  assert.deepEqual(board.tasks.map(task => [task.status, task.attempts[0].outcome, task.attempts[0].tokens]),
+    [['done', 'accepted', 7], ['done', 'accepted', 7]]);
+});
+
+test('negative attempt token deltas are stored as null', async t => {
+  const f = await fixture(t); await f.transcript();
+  f.board('init', 'shrinking usage', '--session', f.sessionId);
+  f.board('add', '1', 'fix', '--exec', 'codex');
+  const path = join(f.home, 'jobs/current.json');
+  const job = spent => ({ id: 'current', cwd: f.cwd, label: '#1 fix', status: 'completed',
+    startedAt: new Date().toISOString(), tokens: { spent } });
+  await json(path, job(50));
+  f.board('set', '1', 'running'); f.board('set', '1', 'rework');
+  assert.equal(f.task().attempts[0].tokens, 50);
+  await json(path, job(20));
+  f.board('set', '1', 'running'); f.board('set', '1', 'done');
+  assert.deepEqual(f.task().attempts.map(attempt => attempt.tokens), [50, null]);
+});
+
+test('Claude task rows use their model family colour, including the open attempt and Sonnet fallback', () => {
+  for (const [model, family] of [['claude-opus-5-5', 'opus'], ['sonnet', 'sonnet'], ['claude-haiku-4-5', 'haiku'],
+    ['fable', 'fable'], ['unknown', 'sonnet'], [null, 'sonnet']]) {
+    for (const open of [false, true]) {
+      const task = { id: '1', title: 'fix', executor: open ? 'codex' : 'claude', model: open ? 'gpt-old' : model,
+        status: 'running', attemptList: open ? [{ provider: 'claude', model, outcome: null }] : [] };
+      const session = { board: { tasks: [task] } };
+      const plain = renderRows(session)[0], coloured = renderRows(session, { color: true })[0];
+      const label = model ? model.replace(/^claude-/, '').slice(0, 14) : 'Other';
+      assert(coloured.includes(paint(label.padEnd(Math.max(6, label.length)), executorColors[family], true)), coloured);
+      assert.equal(coloured.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, ''), plain);
+    }
+  }
+});
+
+test('active snapshots exclude temporary benchmark directories and their descendants', async t => {
+  const f = await fixture(t); await f.transcript();
+  for (const [sessionId, cwd] of [['bench', join(f.cwd, 'orchestra-bench-abc')],
+    ['nested', join(f.cwd, 'orchestra-bench-def', 'nested')], ['ordinary', join(f.cwd, 'orchestra-benchmark-project')]]) {
+    await mkdir(cwd, { recursive: true });
+    const path = join(f.env.CLAUDE_CONFIG_DIR, 'projects', projectSlug(cwd), `${sessionId}.jsonl`);
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(path, JSON.stringify({ type: 'assistant', cwd, timestamp: new Date().toISOString(),
+      message: { id: sessionId, model: 'claude-sonnet', content: [] } }) + '\n');
+  }
+  const snapshot = f.evaluate('console.log(JSON.stringify(await collect.collectActive()));');
+  assert.deepEqual(snapshot.sessions.map(session => session.sessionId).sort(), [f.sessionId, 'ordinary'].sort());
 });

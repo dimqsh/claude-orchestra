@@ -36,7 +36,10 @@ export function renderRow(row, { width = 100, color = false, prefix = '', column
   const labelWidth = Math.max(1, Math.min(Math.round(width * 0.28), width - columnPrefixWidth - 27 - (executorWidth - 6)) - (displayWidth(prefix) - columnPrefixWidth));
   const label = column(firstLine(row.label), labelWidth);
   const glyph = paint(statusGlyphs[row.status] || '○', statusColors[row.status], color);
-  const executor = paint(column(executorLabel(row, showModel), executorWidth), executorColors[row.executor], color);
+  const family = row.executor === 'claude'
+    ? ['opus', 'sonnet', 'haiku', 'fable'].find(name => String(row.model || '').toLowerCase().includes(name)) || 'sonnet'
+    : row.executor;
+  const executor = paint(column(executorLabel(row, showModel), executorWidth), executorColors[family], color);
   const tokens = column(row.tokens?.spent ? formatTokens(row.tokens.spent) : '—', 6, true);
   return truncate(`${prefix}${glyph} ${label} ${executor} ${tokens}   ${cleanText(row.activity)}`, width);
 }

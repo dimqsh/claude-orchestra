@@ -19,8 +19,14 @@ function inChild(home, body) {
   const script = `import * as catalog from ${JSON.stringify(catalogUrl)};
 import * as paths from ${JSON.stringify(pathsUrl)};
 ${body}`;
-  const out = execFileSync(process.execPath, ['--input-type=module', '-e', script],
-    { env: { ...process.env, ORCHESTRA_HOME: home }, encoding: 'utf8' });
+  let out;
+  try {
+    out = execFileSync(process.execPath, ['--input-type=module', '-e', script],
+      { env: { ...process.env, ORCHESTRA_HOME: home }, encoding: 'utf8', timeout: 30000 });
+  } catch (error) {
+    error.message += `; signal=${error.signal}; stderr=${error.stderr ?? ''}`;
+    throw error;
+  }
   return JSON.parse(out.trim().split('\n').pop());
 }
 
