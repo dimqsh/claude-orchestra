@@ -7,7 +7,6 @@ const BENCHLM = 'benchlm.ai';
 const AA_URL = 'https://artificialanalysis.ai/api/v2/data/llms/models';
 const BENCHLM_URL = 'https://raw.githubusercontent.com/leoncuhk/awesome-llm-bench/main/README.md';
 const WEEK_MS = 7 * 86400000;
-const aliases = JSON.parse(readFileSync(new URL('../data/model-aliases.json', import.meta.url), 'utf8'));
 
 function normalize(name, creator = '') {
   let value = String(name || '').trim().toLowerCase();
@@ -31,7 +30,12 @@ export function matchModel(publicName, creator, catalog) {
   };
   const exact = find(name);
   if (exact) return exact;
-  return Object.hasOwn(aliases, name) ? find(normalize(aliases[name])) : null;
+  let aliases = {};
+  try {
+    const value = JSON.parse(readFileSync(new URL('../data/model-aliases.json', import.meta.url), 'utf8'))?.aliases;
+    if (value && typeof value === 'object' && !Array.isArray(value)) aliases = value;
+  } catch { /* Missing or malformed aliases must not prevent exact matching or discovery. */ }
+  return Object.hasOwn(aliases, name) && typeof aliases[name] === 'string' ? find(normalize(aliases[name])) : null;
 }
 
 const number = value => typeof value === 'number' && Number.isFinite(value) && value >= 0;
@@ -126,7 +130,8 @@ export async function refreshBenchmarks({ force = false, fetch = globalThis.fetc
       );
       if (data) result.matched.push(id);
       else result.unmatched.push(id);
-      if (!preserve) entry.public = data || { source: null, note: 'no public data' };
+      // A source failure leaves unchecked entries retryable even with a recent benchmarksAt.
+      if (!preserve && (data || !failed)) entry.public = data || { source: null, note: 'no public data' };
     }
     // A failed request is retryable; it must not suppress retries for another week.
     if (!failed) current.benchmarksAt = new Date().toISOString();

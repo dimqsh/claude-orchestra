@@ -9,12 +9,16 @@ import { renderBoard } from '../lib/render.mjs';
 const executors = ['codex', 'claude', 'gemini', 'kimi', 'sonnet', 'opus', 'haiku', 'fable'];
 const statuses = ['queued', 'running', 'review', 'rework', 'done', 'failed'];
 async function attemptTokens(board, task, attempt, cwd) {
+  const earlier = task.attempts.filter(previous => previous.n < attempt.n);
+  if (earlier.some(previous => previous.tokens == null)) return null;
   try {
     const session = await collectSession({ cwd, ...(board.sessionId ? {
       sessionId: board.sessionId, transcriptPath: join(projectDir(cwd), `${board.sessionId}.jsonl`),
     } : {}) });
-    return session.agents.filter(agent => agent.taskId === task.id && Date.parse(agent.startedAt) > Date.parse(attempt.startedAt))
-      .reduce((sum, agent) => sum + agent.tokens.spent, 0);
+    const linked = session.agents.filter(agent => agent.taskId === task.id);
+    if (!linked.length) return null;
+    // SendMessage resumes the same agent, so startedAt cannot delimit its new work.
+    return linked.reduce((sum, agent) => sum + agent.tokens.spent, 0) - earlier.reduce((sum, previous) => sum + previous.tokens, 0);
   } catch { return null; } // A board can be used before its session transcript exists.
 }
 function fields(args, allowed) {

@@ -13,10 +13,13 @@ const errorText = error => String(error.stderr?.trim() || error.stdout?.trim() |
 const runOptions = { encoding: 'utf8', timeout: 30_000, maxBuffer: 1024 * 1024 };
 const noSandbox = { ok: false, error: 'disabled: no sandbox' };
 function execute(runner, command, args) {
-  return new Promise((resolve, reject) => runner(command, args, runOptions, (error, stdout, stderr) => {
-    if (error) reject(Object.assign(error, { stdout, stderr }));
-    else resolve({ stdout, stderr });
-  }));
+  return new Promise((resolve, reject) => {
+    const child = runner(command, args, runOptions, (error, stdout, stderr) => {
+      if (error) reject(Object.assign(error, { stdout, stderr }));
+      else resolve({ stdout, stderr });
+    });
+    child?.stdin?.end();
+  });
 }
 
 /** Agent aliases stay stable; resolved versions come only from recent assistant events. */
@@ -78,19 +81,24 @@ export function listKimi() {
   return [{ provider: 'kimi', model: 'default', runner: 'kimi-task.mjs', efforts: [] }];
 }
 
-export async function probe(candidate, { runner = execFile } = {}) {
-  if (candidate.provider === 'claude') return { ok: true };
-  if (candidate.provider === 'kimi') return { ...noSandbox };
+async function probeAccess(candidate, { runner = execFile } = {}) {
+  if (candidate.provider === 'claude') return { ok: true, probed: false };
+  if (candidate.provider === 'kimi') return { ...noSandbox, probed: false };
   let command, args;
   if (candidate.provider === 'codex') {
-    command = 'codex'; args = ['exec', '-m', candidate.model, '-s', 'read-only', 'Reply OK'];
+    command = 'codex'; args = ['exec', '-m', candidate.model, '-s', 'read-only', '--skip-git-repo-check', 'Reply OK'];
   } else if (candidate.provider === 'gemini') {
     try { await access(join(homedir(), '.gemini/oauth_creds.json')); }
-    catch { return { ok: false, error: 'missing ~/.gemini/oauth_creds.json' }; }
+    catch { return { ok: false, error: 'missing ~/.gemini/oauth_creds.json', probed: false }; }
     command = 'gemini'; args = [...(candidate.model === 'default' ? [] : ['-m', candidate.model]), '-p', 'Reply OK'];
-  } else return { ok: false, error: `unknown provider: ${candidate.provider}` };
-  try { await execute(runner, command, args); return { ok: true }; }
-  catch (error) { return { ok: false, error: errorText(error) }; }
+  } else return { ok: false, error: `unknown provider: ${candidate.provider}`, probed: false };
+  try { await execute(runner, command, args); return { ok: true, probed: true }; }
+  catch (error) { return { ok: false, error: errorText(error), probed: !['ENOENT', 'EACCES'].includes(error.code) }; }
+}
+
+export async function probe(candidate, options) {
+  const { probed, ...result } = await probeAccess(candidate, options);
+  return result;
 }
 
 const identity = entry => ({ provider: entry.provider, model: entry.model, runner: entry.runner, efforts: entry.efforts,
@@ -109,17 +117,18 @@ export async function discover({ force = false, runner = execFile } = {}) {
   try { codex = await listCodex({ runner }); candidates.push(...codex); }
   catch (error) {
     for (const entry of Object.values(catalog.models).filter(entry => entry.provider === 'codex')) {
-      updates.set(entry.id || entryId(entry.provider, entry.model), { available: { ok: false, error: errorText(error), checkedAt: new Date().toISOString() } });
+      updates.set(entry.id || entryId(entry.provider, entry.model), { available: { ok: false, error: errorText(error), probed: false, checkedAt: new Date().toISOString() } });
     }
   }
   candidates.push(...listGemini(catalog), ...listKimi());
   for (const candidate of candidates) {
     const id = entryId(candidate.provider, candidate.model), previous = catalog.models[id];
-    // Successful Codex checks survive daily refreshes unless its CLI metadata changes.
-    // Failures get another chance the next day, even when the model itself is unchanged.
-    const reuse = candidate.provider === 'codex' && previous && !differs(previous, candidate) &&
-      previous.available && (previous.available.ok || recent(previous.available.checkedAt));
-    const available = reuse ? previous.available : { ...await probe(candidate, { runner }), checkedAt: new Date().toISOString() };
+    // Only actual model probes spend the daily budget, including forced discovery.
+    // Successful unchanged Codex checks also survive later daily refreshes.
+    const reuse = ['codex', 'gemini'].includes(candidate.provider) && previous && !differs(previous, candidate) &&
+      previous.available?.probed === true &&
+      ((candidate.provider === 'codex' && previous.available.ok) || recent(previous.available.checkedAt));
+    const available = reuse ? previous.available : { ...await probeAccess(candidate, { runner }), checkedAt: new Date().toISOString() };
     updates.set(id, { ...candidate, id, description: candidate.description, available });
   }
   // A formerly visible model must not remain routable after it disappears from the CLI.
@@ -127,12 +136,12 @@ export async function discover({ force = false, runner = execFile } = {}) {
     const visible = new Set(codex.map(entry => entryId(entry.provider, entry.model)));
     for (const [id, entry] of Object.entries(catalog.models)) {
       if (entry.provider === 'codex' && !visible.has(id)) updates.set(id, {
-        available: { ok: false, error: 'not listed by codex debug models', checkedAt: new Date().toISOString() },
+        available: { ok: false, error: 'not listed by codex debug models', probed: false, checkedAt: new Date().toISOString() },
       });
     }
   }
   if (!allowFable() && catalog.models['claude:fable']) updates.set('claude:fable', {
-    available: { ok: false, error: 'disabled: allowFable is false', checkedAt: new Date().toISOString() },
+    available: { ok: false, error: 'disabled: allowFable is false', probed: false, checkedAt: new Date().toISOString() },
   });
   await updateCatalog(current => {
     for (const [id, update] of updates) {

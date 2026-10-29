@@ -357,7 +357,8 @@ export async function history() {
         const models = new Map();
         for (const attempt of task.attempts) {
           if (!attempt?.provider || !attempt.model || !['accepted', 'rework', 'failed'].includes(attempt.outcome)) continue;
-          const id = entryId(attempt.provider, attempt.model);
+          const provider = ['sonnet', 'haiku', 'opus', 'fable'].includes(attempt.provider) ? 'claude' : attempt.provider;
+          const id = entryId(provider, attempt.model);
           if (!models.has(id)) models.set(id, []);
           models.get(id).push(attempt);
         }
@@ -367,7 +368,7 @@ export async function history() {
           if (!types.has(task.type)) types.set(task.type, { tasks: 0, firstTry: 0, tokens: 0, known: 0 });
           const stats = types.get(task.type);
           stats.tasks++;
-          if (attempts.some(attempt => attempt.n === 1 && attempt.outcome === 'accepted')) stats.firstTry++;
+          if (attempts.sort((a, b) => a.n - b.n)[0].outcome === 'accepted') stats.firstTry++;
           if (attempts.every(attempt => Number.isFinite(attempt.tokens) && attempt.tokens >= 0)) {
             stats.tokens += attempts.reduce((sum, attempt) => sum + attempt.tokens, 0);
             stats.known++;

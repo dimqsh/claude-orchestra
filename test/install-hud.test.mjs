@@ -4,11 +4,11 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const realScript = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../plugins/orchestra/scripts/install-hud.mjs');
 
-// Each test gets a throw-away plugin tree (script + stub lib/ and hud/) and a throw-away
+// Each test gets a throw-away plugin tree (script + stub lib/, hud/ and data/) and a throw-away
 // CLAUDE_CONFIG_DIR / ORCHESTRA_HOME, so the real ~/.claude is never touched.
 function makeEnv(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'orchestra-hud-test-'));
@@ -18,11 +18,13 @@ function makeEnv(t) {
   fs.mkdirSync(path.join(plugin, 'scripts'), { recursive: true });
   fs.mkdirSync(path.join(plugin, 'lib', 'sub'), { recursive: true });
   fs.mkdirSync(path.join(plugin, 'hud'), { recursive: true });
+  fs.mkdirSync(path.join(plugin, 'data'), { recursive: true });
   fs.copyFileSync(realScript, path.join(plugin, 'scripts', 'install-hud.mjs'));
   fs.writeFileSync(path.join(plugin, 'lib', 'collect.mjs'), '// stub v1\n');
   fs.writeFileSync(path.join(plugin, 'lib', 'sub', 'deep.mjs'), '// deep\n');
   fs.writeFileSync(path.join(plugin, 'hud', 'statusline.mjs'), '// stub statusline\n');
   fs.writeFileSync(path.join(plugin, 'hud', 'subagent-rows.mjs'), '// stub rows\n');
+  fs.writeFileSync(path.join(plugin, 'data', 'model-aliases.json'), '{"aliases":{}}\n');
 
   const claudeDir = path.join(root, 'claude');
   const home = path.join(root, 'home');
@@ -62,6 +64,7 @@ test('install: copies runtime, backs up, chains previous statusLine, keeps other
   assert.equal(fs.readFileSync(path.join(e.home, 'lib', 'sub', 'deep.mjs'), 'utf8'), '// deep\n');
   assert.ok(fs.existsSync(path.join(e.home, 'hud', 'statusline.mjs')));
   assert.ok(fs.existsSync(path.join(e.home, 'hud', 'subagent-rows.mjs')));
+  assert.equal(fs.readFileSync(path.join(e.home, 'data', 'model-aliases.json'), 'utf8'), '{"aliases":{}}\n');
 
   const [backup] = e.backups();
   assert.ok(backup, 'backup file created');
@@ -100,6 +103,24 @@ test('install is idempotent: second run keeps the saved chain', (t) => {
   assert.deepEqual(e.readSettings(), afterFirst);
   assert.deepEqual(e.readConfig(), { chain: 'echo user-status', chainOriginal: USER_STATUS });
   assert.ok(!e.readConfig().chain.includes('orchestra'), 'chain is never our own command');
+});
+
+test('installed benchmarks import and resolve aliases using the copied data', (t) => {
+  const e = makeEnv(t);
+  for (const dir of ['lib', 'data']) {
+    fs.cpSync(path.resolve(path.dirname(realScript), '..', dir), path.join(e.plugin, dir), { recursive: true });
+  }
+  const installed = e.run('install');
+  assert.equal(installed.code, 0, installed.stderr);
+  assert.ok(fs.existsSync(path.join(e.home, 'data', 'model-aliases.json')));
+  const result = spawnSync(process.execPath, ['--input-type=module', '-e', `
+    import { matchModel } from ${JSON.stringify(pathToFileURL(path.join(e.home, 'lib', 'benchmarks.mjs')).href)};
+    console.log(matchModel('Sonnet 5.5', 'Anthropic', { models: {
+      'claude:sonnet': { provider: 'claude', model: 'sonnet', resolved: 'claude-sonnet-5-5' }
+    } }));
+  `], { env: { ...process.env, HOME: e.root, ORCHESTRA_HOME: e.home, CLAUDE_CONFIG_DIR: e.claudeDir, CODEX_HOME: path.join(e.root, 'codex') }, encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stderr, ''); assert.equal(result.stdout, 'claude:sonnet\n');
 });
 
 test('install without settings.json creates it and has no chain', (t) => {
@@ -198,12 +219,14 @@ test('sync: no-op when not installed, re-copies when installed, never touches se
   const installed = fs.readFileSync(e.settingsPath, 'utf8');
   fs.writeFileSync(path.join(e.plugin, 'lib', 'collect.mjs'), '// stub v2\n');
   fs.writeFileSync(path.join(e.plugin, 'hud', 'extra.mjs'), '// new\n');
+  fs.writeFileSync(path.join(e.plugin, 'data', 'model-aliases.json'), '{"aliases":{"new":"model"}}\n');
 
   const r = e.run('sync', '--quiet');
   assert.equal(r.code, 0);
   assert.equal(r.stdout, '');
   assert.equal(fs.readFileSync(path.join(e.home, 'lib', 'collect.mjs'), 'utf8'), '// stub v2\n');
   assert.ok(fs.existsSync(path.join(e.home, 'hud', 'extra.mjs')));
+  assert.equal(fs.readFileSync(path.join(e.home, 'data', 'model-aliases.json'), 'utf8'), '{"aliases":{"new":"model"}}\n');
   assert.equal(fs.readFileSync(e.settingsPath, 'utf8'), installed);
 });
 
