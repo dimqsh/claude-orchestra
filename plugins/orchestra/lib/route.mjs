@@ -67,11 +67,17 @@ export function costClass(entry) {
   if (price === null) {
     let defaults = {};
     try {
-      const value = JSON.parse(readFileSync(new URL('../data/model-aliases.json', import.meta.url), 'utf8'))?.providerCostClasses;
-      if (value && typeof value === 'object' && !Array.isArray(value)) defaults = value;
+      defaults = JSON.parse(readFileSync(new URL('../data/model-aliases.json', import.meta.url), 'utf8')) ?? {};
     } catch { /* Missing or malformed optional defaults must not break routing. */ }
-    const cost = defaults[entry.provider];
-    return typeof cost === 'string' && /^\${1,4}$/.test(cost) ? cost : '$$';
+    for (const [values, key] of [
+      [defaults.modelCostClasses, entry.id || entryId(entry.provider, entry.model)],
+      [defaults.providerCostClasses, entry.provider],
+    ]) {
+      if (!values || typeof values !== 'object' || Array.isArray(values)) continue;
+      const cost = values[key];
+      if (typeof cost === 'string' && /^\${1,4}$/.test(cost)) return cost;
+    }
+    return '$$';
   }
   return price <= 1 ? '$' : price <= 5 ? '$$' : price <= 15 ? '$$$' : '$$$$';
 }
@@ -98,10 +104,10 @@ function hasEvidence(entry, type, history, context) {
   return finite(entry.public?.[context.metric[0]]) || observations(entry, type, history).n >= 1;
 }
 
-/** Eligible model IDs without public primary-metric or measured per-type evidence. */
+/** Eligible, non-skipped model IDs without public primary-metric or measured per-type evidence. */
 export function untested(type, catalog, limits, history = {}) {
   const entries = eligibleEntries(catalog), context = primaryMetric(entries);
-  return entries.filter(entry => !hasEvidence(entry, type, history, context))
+  return entries.filter(entry => !entry.own?.skipped && !hasEvidence(entry, type, history, context))
     .map(entry => entry.id || entryId(entry.provider, entry.model));
 }
 
@@ -118,7 +124,9 @@ export function ladder(type, catalog, limits, history = {}) {
   const cheapest = (a, b) => a.cost.length - b.cost.length || price(a) - price(b) ||
     b.score.value - a.score.value || a.id.localeCompare(b.id);
   candidates.sort(cheapest);
-  const best = [...candidates].sort((a, b) => b.score.value - a.score.value || cheapest(a, b))[0];
+  const best = [...candidates].sort((a, b) => b.score.value - a.score.value ||
+    b.cost.length - a.cost.length || prior(b.entry, context).value - prior(a.entry, context).value ||
+    a.id.localeCompare(b.id))[0];
   if (!best) return [];
   const rows = [];
   const add = (candidate, rung) => rows.push({ rung, id: candidate.id,
@@ -129,7 +137,7 @@ export function ladder(type, catalog, limits, history = {}) {
     add(first, 1);
     if (first === best) return rows;
     const next = candidates.find(row => row !== first &&
-      (row.score.value >= first.score.value + 5 || (row.cost.length > first.cost.length && row.score.value > first.score.value)));
+      (row.score.value >= first.score.value + 5 || (row.cost.length > first.cost.length && row.score.value >= first.score.value)));
     if (next) add(next, 2);
   }
   if (!rows.some(row => row.id === best.id)) add(best, 3);

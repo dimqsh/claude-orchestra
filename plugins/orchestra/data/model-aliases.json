@@ -2,6 +2,11 @@
   "aliases": {
     "sonnet-5-5": "claude-sonnet-5-5"
   },
+  "modelCostClasses": {
+    "claude:haiku": "$",
+    "claude:sonnet": "$$",
+    "claude:fable": "$$$"
+  },
   "providerCostClasses": {
     "claude": "$$",
     "codex": "$$$",

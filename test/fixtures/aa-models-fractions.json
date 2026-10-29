@@ -1,0 +1,39 @@
+{
+  "data": [
+    {
+      "name": "GPT-6.1 Sol",
+      "slug": "gpt-6-1-sol",
+      "model_creator": { "name": "OpenAI" },
+      "evaluations": { "artificial_analysis_coding_index": 0.95, "livecodebench": 0.717 },
+      "pricing": { "price_1m_input_tokens": 1.25, "price_1m_output_tokens": 10 }
+    },
+    {
+      "name": "GPT-5 (high)",
+      "slug": "gpt-5-high",
+      "model_creator": { "name": "OpenAI" },
+      "evaluations": { "artificial_analysis_coding_index": 75, "livecodebench": 0.8 },
+      "pricing": { "price_1m_input_tokens": 2, "price_1m_output_tokens": 8 }
+    },
+    {
+      "name": "GPT-5 (medium)",
+      "slug": "gpt-5-medium",
+      "model_creator": { "name": "OpenAI" },
+      "evaluations": { "artificial_analysis_coding_index": 65, "livecodebench": 0.7 },
+      "pricing": { "price_1m_input_tokens": 1, "price_1m_output_tokens": 4 }
+    },
+    {
+      "name": "Claude 5.5 Sonnet (Reasoning)",
+      "slug": "claude-sonnet-5-5",
+      "model_creator": { "name": "Anthropic" },
+      "evaluations": { "artificial_analysis_coding_index": 60, "livecodebench": 1 },
+      "pricing": { "price_1m_input_tokens": 3, "price_1m_output_tokens": 15 }
+    },
+    {
+      "name": "GPT-6 Sol (high)",
+      "slug": "gpt-6-sol",
+      "model_creator": { "name": "OpenAI" },
+      "evaluations": { "artificial_analysis_coding_index": 99, "livecodebench": 0.99 },
+      "pricing": { "price_1m_input_tokens": 1, "price_1m_output_tokens": 4 }
+    }
+  ]
+}
