@@ -181,9 +181,9 @@ test('board CLI init/add/set/exec/show/finish/json, attempts and archive use ato
   }
   board('init', 'check', '--session', 'sid'); board('add', '1', 'task', '--exec', 'codex'); board('add', '2', 'dependent', '--exec', 'sonnet', '--deps', '1');
   board('set', '1', 'running'); board('set', '1', 'running');
-  assert.equal(JSON.parse(board('json')).tasks[0].attempts, 1);
+  assert.equal(JSON.parse(board('json')).tasks[0].attempts.length, 1);
   board('set', '1', 'rework', '--note', 'fix it'); board('set', '1', 'running'); board('exec', '1', 'opus');
-  assert.equal(JSON.parse(board('json')).tasks[0].attempts, 2);
+  assert.equal(JSON.parse(board('json')).tasks[0].attempts.length, 2);
   assert.equal(JSON.parse(board('json')).tasks[0].executor, 'opus');
   assert(board('show').includes('waits on #1')); assert(!board('show').includes('\x1b'));
   assert(board('show', '--color').includes('\x1b'));

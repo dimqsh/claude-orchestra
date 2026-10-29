@@ -298,7 +298,9 @@ export async function collectSession({ transcriptPath, cwd, sessionId }) {
   if (rawBoard && (!rawBoard.sessionId || rawBoard.sessionId === sessionId)) {
     board = { title: rawBoard.title, createdAt: rawBoard.createdAt, finishedAt: rawBoard.finishedAt || null, integration: rawBoard.integration || null, tasks: (rawBoard.tasks || []).map(task => {
       const linked = merged.filter(agent => agent.taskId === task.id);
-      return { ...task, parentId: task.parent || (String(task.id).includes('.') ? String(task.id).split('.')[0] : null), branch: task.branch || null, merged: task.merged === true,
+      const { attempts, ...fields } = task;
+      return { ...fields, type: task.type || null, attemptCount: Array.isArray(attempts) ? attempts.length : number(attempts), attemptList: Array.isArray(attempts) ? attempts : [],
+        parentId: task.parent || (String(task.id).includes('.') ? String(task.id).split('.')[0] : null), branch: task.branch || null, merged: task.merged === true,
         tokens: linked.reduce((sum, agent) => addTokens(sum, agent.tokens), emptyTokens()), agentIds: linked.map(agent => agent.id) };
     }) };
   }
@@ -338,6 +340,46 @@ export async function collectActive({ sinceMinutes = 120 } = {}) {
     try { sessions.push(await collectSession({ transcriptPath: path })); } catch { /* file removed or replaced during scan */ }
   }
   return { version: 1, generatedAt: new Date().toISOString(), sessions };
+}
+// Each model gets one observation per task, even when it needed several attempts.
+// Unknown token totals do not become zero-cost evidence in the average.
+export async function history() {
+  const { TASK_TYPES, entryId } = await import('./catalog.mjs');
+  const totals = new Map();
+  async function scan(directory) {
+    for (const entry of await entries(directory)) {
+      const path = join(directory, entry.name);
+      if (entry.isDirectory()) { await scan(path); continue; }
+      if (!entry.isFile() || !entry.name.endsWith('.json')) continue;
+      const board = await readJSON(path);
+      for (const task of Array.isArray(board?.tasks) ? board.tasks : []) {
+        if (!TASK_TYPES.includes(task.type) || !Array.isArray(task.attempts)) continue;
+        const models = new Map();
+        for (const attempt of task.attempts) {
+          if (!attempt?.provider || !attempt.model || !['accepted', 'rework', 'failed'].includes(attempt.outcome)) continue;
+          const id = entryId(attempt.provider, attempt.model);
+          if (!models.has(id)) models.set(id, []);
+          models.get(id).push(attempt);
+        }
+        for (const [id, attempts] of models) {
+          if (!totals.has(id)) totals.set(id, new Map());
+          const types = totals.get(id);
+          if (!types.has(task.type)) types.set(task.type, { tasks: 0, firstTry: 0, tokens: 0, known: 0 });
+          const stats = types.get(task.type);
+          stats.tasks++;
+          if (attempts.some(attempt => attempt.n === 1 && attempt.outcome === 'accepted')) stats.firstTry++;
+          if (attempts.every(attempt => Number.isFinite(attempt.tokens) && attempt.tokens >= 0)) {
+            stats.tokens += attempts.reduce((sum, attempt) => sum + attempt.tokens, 0);
+            stats.known++;
+          }
+        }
+      }
+    }
+  }
+  await scan(join(orchestraHome, 'boards'));
+  return Object.fromEntries([...totals].map(([id, types]) => [id, Object.fromEntries([...types].map(([type, stats]) => [type, {
+    tasks: stats.tasks, firstTry: stats.firstTry / stats.tasks, avgTokens: stats.known ? stats.tokens / stats.known : null,
+  }]))]));
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   try {
