@@ -24,6 +24,10 @@ let input = '', data = {};
 try {
   for await (const chunk of process.stdin) input += chunk;
   data = JSON.parse(input);
+  if (data?.rate_limits) {
+    // Optional recording must never hold up rendering or make the HUD fail.
+    import('../lib/limits.mjs').then(({ recordClaudeLimits }) => recordClaudeLimits(data.rate_limits)).catch(() => {});
+  }
   const config = orchestraConfig();
   if (typeof config?.chain === 'string' && config.chain.trim() && !process.env.ORCHESTRA_CHAIN_ACTIVE) {
     process.env.ORCHESTRA_CHAIN_ACTIVE = '1';
