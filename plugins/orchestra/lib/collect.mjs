@@ -5,7 +5,7 @@ import { pathToFileURL } from 'node:url';
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { claudeConfigDir, codexHome, orchestraHome, projectSlug, projectDir, boardPath, cacheDir, codexJobsDir, codexStateRoots, canonicalPath, atomicJSON } from './paths.mjs';
+import { claudeConfigDir, codexHome, orchestraHome, projectSlug, projectDir, boardPath, cacheDir, jobsDir, codexJobsDir, codexStateRoots, canonicalPath, atomicJSON } from './paths.mjs';
 
 const execFileAsync = promisify(execFile);
 const number = value => Math.max(0, Number(value) || 0);
@@ -207,15 +207,18 @@ function alive(pid) {
 }
 export async function collectCodexJobs(cwd) {
   const workspace = await projectRoot(cwd), jobs = new Map();
-  for (const entry of await entries(codexJobsDir())) {
-    if (!entry.isFile() || !entry.name.endsWith('.json')) continue;
-    const job = await readJSON(join(codexJobsDir(), entry.name));
-    if (!job?.id || !job.cwd || !await belongsToProject(job.cwd, workspace)) continue;
-    jobs.set(job.id, {
-      id: job.id, kind: 'codex', type: 'codex', executor: 'codex', model: job.model || null,
-      description: job.label || '', taskId: parseTaskId(job.label), status: job.status === 'running' && !alive(job.pid) ? 'stopped' : statusFor(job.status),
-      startedAt: job.startedAt, endedAt: job.endedAt || null, activity: job.activity || 'codex: running', tokens: addTokens(emptyTokens(), job.tokens),
-    });
+  for (const directory of [jobsDir(), codexJobsDir()]) {
+    for (const entry of await entries(directory)) {
+      if (!entry.isFile() || !entry.name.endsWith('.json')) continue;
+      const job = await readJSON(join(directory, entry.name));
+      if (!job?.id || !job.cwd || jobs.has(job.id) || !await belongsToProject(job.cwd, workspace)) continue;
+      const provider = job.provider || 'codex';
+      jobs.set(job.id, {
+        id: job.id, kind: provider, type: provider, executor: provider, model: job.model || null,
+        description: job.label || '', taskId: parseTaskId(job.label), status: job.status === 'running' && !alive(job.pid) ? 'stopped' : statusFor(job.status),
+        startedAt: job.startedAt, endedAt: job.endedAt || null, activity: job.activity || `${provider}: running`, tokens: addTokens(emptyTokens(), job.tokens),
+      });
+    }
   }
   for (const root of codexStateRoots()) {
     for (const entry of await entries(root)) {
