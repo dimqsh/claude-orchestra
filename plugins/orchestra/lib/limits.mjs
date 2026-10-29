@@ -34,10 +34,15 @@ function resetTime(value) {
   return Number.isFinite(date.getTime()) ? date.toISOString() : null;
 }
 
+function currentUsage(usedPercent, resetsAt) {
+  return Number.isFinite(usedPercent) && Date.parse(resetsAt) <= Date.now() ? 0 : usedPercent;
+}
+
 function window(name, value, percentKeys) {
   if (!name || !isObject(value)) return null;
   const usedPercent = percentKeys.map(key => value[key]).find(Number.isFinite);
-  return usedPercent === undefined ? null : { name, usedPercent, resetsAt: resetTime(value.resets_at) };
+  const resetsAt = resetTime(value.resets_at);
+  return usedPercent === undefined ? null : { name, usedPercent: currentUsage(usedPercent, resetsAt), resetsAt };
 }
 
 function claudeWindows(limits) {
@@ -93,6 +98,6 @@ export async function readLimits() {
 export function maxUsedPercent(limits, provider) {
   const windows = limits?.[provider];
   if (!Array.isArray(windows)) return null;
-  const values = windows.map(value => value?.usedPercent).filter(Number.isFinite);
+  const values = windows.map(value => currentUsage(value?.usedPercent, value?.resetsAt)).filter(Number.isFinite);
   return values.length ? Math.max(...values) : null;
 }

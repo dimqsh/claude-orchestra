@@ -23,7 +23,9 @@ async function sandbox(t) {
   }
   function run(code) {
     const child = spawnSync(process.execPath, ['--input-type=module', '-e',
-      `import * as limits from ${JSON.stringify(limitsUrl)};\n${code}`], { env, encoding: 'utf8', timeout: 10000 });
+      `import * as limits from ${JSON.stringify(limitsUrl)};
+      // Keep recorded fixture windows in the future as the real clock advances.
+      Date.now = () => Date.parse('2026-10-29T00:00:00Z');\n${code}`], { env, encoding: 'utf8', timeout: 10000 });
     assert.equal(child.status, 0, child.stderr);
     assert.equal(child.stderr, '');
     return JSON.parse(child.stdout);
@@ -121,6 +123,48 @@ test('Codex secondary windows are mapped and malformed trailing lines are ignore
     { name: '5h', usedPercent: 0, resetsAt: '2026-10-31T00:00:00.000Z' },
     { name: 'week', usedPercent: 80, resetsAt: null }
   ]);
+});
+
+test('past Claude resets_at clears usage while preserving both windows and reset times', async t => {
+  const f = await sandbox(t);
+  await f.put(f.path, JSON.stringify({ claude: {
+    five_hour: { used_percentage: 95, resets_at: 1793145600 },
+    seven_day: { utilization: 90, resets_at: '2026-10-28T00:00:00Z' }
+  } }));
+  const data = f.run('console.log(JSON.stringify(await limits.readLimits()));');
+  assert.deepEqual(data, { ...empty, claude: [
+    { name: '5h', usedPercent: 0, resetsAt: '2026-10-28T00:00:00.000Z' },
+    { name: '7d', usedPercent: 0, resetsAt: '2026-10-28T00:00:00.000Z' }
+  ] });
+});
+
+test('past Codex resets_at clears primary and secondary usage without a new session', async t => {
+  const f = await sandbox(t);
+  await f.put(f.rollout('2026/10/28/rollout-reset.jsonl'), JSON.stringify({ type: 'event_msg', payload: {
+    type: 'token_count', rate_limits: {
+      primary: { used_percent: 95, window_minutes: 10080, resets_at: 1793145600 },
+      secondary: { used_percent: 80, window_minutes: 300, resets_at: 1793145600 }
+    }
+  } }));
+  const data = f.run('console.log(JSON.stringify(await limits.readLimits()));');
+  assert.deepEqual(data, { ...empty, codex: [
+    { name: 'week', usedPercent: 0, resetsAt: '2026-10-28T00:00:00.000Z' },
+    { name: '5h', usedPercent: 0, resetsAt: '2026-10-28T00:00:00.000Z' }
+  ] });
+});
+
+test('maxUsedPercent rechecks reset times on previously read windows', async t => {
+  const f = await sandbox(t);
+  const data = { claude: [
+    { name: '5h', usedPercent: 95, resetsAt: '2026-10-28T00:00:00.000Z' },
+    { name: '7d', usedPercent: 20, resetsAt: '2026-10-31T00:00:00.000Z' }
+  ], codex: [{ name: 'week', usedPercent: 95, resetsAt: '2026-10-28T00:00:00.000Z' }] };
+  const result = f.run(`const data = ${JSON.stringify(data)};
+    console.log(JSON.stringify({ claude: limits.maxUsedPercent(data, 'claude'),
+      codex: limits.maxUsedPercent(data, 'codex'), data }));`);
+  assert.equal(result.claude, 20);
+  assert.equal(result.codex, 0);
+  assert.deepEqual(result.data, data, 'checking usage does not mutate a previously read snapshot');
 });
 
 test('unknown Codex windows stay null rather than reviving an older event', async t => {
