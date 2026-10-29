@@ -1,9 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 const routeUrl = new URL('../plugins/orchestra/lib/route.mjs', import.meta.url).href;
 const cliUrl = new URL('../plugins/orchestra/scripts/models.mjs', import.meta.url).href;
@@ -44,7 +45,7 @@ function fixture(t, seed = candidates()) {
   const brief = (args = []) => child(`globalThis.fetch = () => { throw new Error('unexpected network'); };
     process.argv = [process.execPath, 'models.mjs', 'brief', ...${JSON.stringify(args)}];
     await import(${JSON.stringify(cliUrl)});`);
-  return { root, store, env, run, brief };
+  return { root, store, env, child, run, brief };
 }
 
 // The numeric choices below are routing policy, not claims about actual provider pricing.
@@ -62,7 +63,9 @@ test('rung 1 is the cheapest candidate at or above 85% of the best', t => {
   assert.equal(rows[0].lowLimit, false);
   assert.deepEqual(rows.map(row => row.rung), [1, 2, 3]);
   assert.equal(rows[2].id, 'codex:best');
-  assert.equal(rows[2].effort, 'xhigh');
+  assert.equal(rows[0].effort, 'medium');
+  assert.equal(rows[1].effort, 'high');
+  assert.equal(rows[2].effort, 'high');
   assert.equal(new Set(rows.map(row => row.id)).size, rows.length);
 });
 
@@ -73,8 +76,14 @@ test('rung 2 is at least 5 points higher or one cost class up', t => {
       entry('codex', 'step', value, price), entry('codex', 'best', 100, 20));
     const rows = f.run(`r.ladder('bug', ${JSON.stringify(input)}, {}, {})`);
     assert.equal(rows[1].rung, 2);
-    assert.equal(rows[1].id, 'codex:step');
-    assert.ok(rows[1].score.value >= rows[0].score.value + 5 || rows[1].cost.length > rows[0].cost.length);
+    if (value === 80) {
+      assert.equal(rows.some(row => row.id === 'codex:step'), false);
+      assert.equal(rows[1].id, 'codex:best');
+    } else {
+      assert.equal(rows[1].id, 'codex:step');
+    }
+    assert.ok(rows[1].score.value >= rows[0].score.value + 5 ||
+      (rows[1].cost.length > rows[0].cost.length && rows[1].score.value > rows[0].score.value));
   }
 });
 
@@ -107,22 +116,22 @@ test('history with 5 tasks overrides public scores, using the fraction from hist
   assert.equal(out.rows[0].id, b.id);
   assert.equal(f.run(`r.score(${JSON.stringify(a)}, 'docs', ${JSON.stringify(history)}).value`), 80);
   history[a.id].bug.tasks = 4;
-  assert.equal(f.run(`r.score(${JSON.stringify(a)}, 'bug', ${JSON.stringify(history)}).value`), 90);
+  assert.ok(Math.abs(f.run(`r.score(${JSON.stringify(a)}, 'bug', ${JSON.stringify(history)}).value`) - 580 / 9) < 1e-9);
 });
 
 test('own per-type pass rate adjusts the public prior and evidence names the sources and date', t => {
   const f = fixture(t);
   const a = entry('codex', 'a', 74, 2, { own: { byType: { bug: { passed: 6, total: 6 } } } });
   const result = f.run(`r.score(${JSON.stringify(a)}, 'bug', {})`);
-  assert.equal(result.value, 87); // Equal weight for the public prior and own rate.
+  assert.ok(Math.abs(result.value - 89.6) < 1e-9); // Six observations get weight 6 / (6 + 4).
   assert.match(result.evidence, /own 6\/6 · AA 74/);
   assert.match(result.evidence, /2026-10-28/);
   assert.equal(f.run(`r.score(${JSON.stringify(a)}, 'docs', {}).value`), 74);
   a.public = { source: null, note: 'no public data' };
-  assert.equal(f.run(`r.score(${JSON.stringify(a)}, 'bug', {}).value`), 100);
-  assert.deepEqual(f.run(`r.score(${JSON.stringify(a)}, 'docs', {})`), { value: 0, evidence: 'no public data' });
+  assert.equal(f.run(`r.score(${JSON.stringify(a)}, 'bug', {}).value`), 80);
+  assert.deepEqual(f.run(`r.score(${JSON.stringify(a)}, 'docs', {})`), { value: 50, evidence: 'no public data · neutral prior 50' });
   a.own.byType.bug = { passed: 0, total: 0 };
-  assert.equal(f.run(`r.score(${JSON.stringify(a)}, 'bug', {}).value`), 0);
+  assert.equal(f.run(`r.score(${JSON.stringify(a)}, 'bug', {}).value`), 50);
   a.public = { source: 'benchlm.ai', date, swebench: 81, terminalbench: 50 };
   const fallback = f.run(`r.score(${JSON.stringify(a)}, 'bug', {})`);
   assert.equal(fallback.value, 81);
@@ -138,7 +147,7 @@ test('cost classes use 3:1 blended prices and provider defaults without changing
   a.public.price = { input: 0, output: 4 }; // Blend = 1, not the 2 of a 1:1 average.
   assert.equal(f.run(`r.costClass(${JSON.stringify(a)})`), '$');
   const aliases = JSON.parse(readFileSync(aliasesUrl, 'utf8'));
-  assert.equal(aliases['sonnet-5-5'], 'claude-sonnet-5-5');
+  assert.equal(aliases.aliases['sonnet-5-5'], 'claude-sonnet-5-5');
   for (const provider of ['claude', 'codex', 'gemini', 'kimi']) {
     a.provider = provider; a.public.price = { input: null, output: null };
     assert.equal(f.run(`r.costClass(${JSON.stringify(a)})`), aliases.providerCostClasses[provider]);
@@ -185,7 +194,7 @@ test('brief output is at most 20 lines, contains evidence and one limits line, a
   assert.ok(lines.length <= 20);
   for (const type of ['bug', 'logic', 'refactor', 'tests', 'docs', 'search']) assert.ok(lines.some(line => line.startsWith(`${type} `)));
   assert.match(out.stdout, /AA 85.*2026-10-28/);
-  assert.match(out.stdout, /codex:best@xhigh/);
+  assert.match(out.stdout, /codex:best@high/);
   assert.equal(lines.filter(line => line.startsWith('Limits:')).length, 1);
   assert.match(lines.at(-1), /claude 41% used\/5h/);
   assert.match(lines.at(-1), /codex unknown/);
@@ -196,7 +205,7 @@ test('brief output is at most 20 lines, contains evidence and one limits line, a
   } }) + '\n');
   const limited = f.brief(['--types', 'bug']);
   assert.equal(limited.status, 0, limited.stderr); assert.equal(limited.stderr, '');
-  assert.match(limited.stdout, /codex:best@xhigh[^\n]*low limit/);
+  assert.match(limited.stdout, /codex:best@high[^\n]*low limit/);
   assert.match(limited.stdout, /Limits:.*codex 95% used\/5h/);
   const selected = f.brief(['--types', 'bug,docs,bug']);
   assert.equal(selected.status, 0, selected.stderr);
@@ -232,4 +241,152 @@ test('brief reads real board history and remains read-only with an empty or unav
   const empty = f.brief(['--types', 'docs']);
   assert.equal(empty.status, 0, empty.stderr); assert.equal(empty.stderr, '');
   assert.match(empty.stdout, /^docs .*no available models/m);
+});
+
+test('rung 2 cannot downgrade when a safe rung 1 ties the low-limit best', t => {
+  const f = fixture(t);
+  const input = catalog(entry('codex', 'limited', 90, 0.1), entry('claude', 'safe', 90, 0.5),
+    entry('gemini', 'downgrade', 85, 2));
+  const rows = f.run(`r.ladder('bug', ${JSON.stringify(input)}, { codex: [{ usedPercent: 95 }] }, {})`);
+  assert.deepEqual(rows.map(row => [row.rung, row.id]), [[1, 'claude:safe'], [3, 'codex:limited']]);
+});
+
+test('own and small history samples pool with weight n / (n + 4)', t => {
+  const f = fixture(t);
+  const a = entry('codex', 'a', 61, 2, { own: { byType: { bug: { passed: 1, total: 1 } } } });
+  const first = f.run(`r.score(${JSON.stringify(a)}, 'bug', {})`);
+  assert.ok(Math.abs(first.value - 68.8) < 1e-9);
+  assert.ok(first.value - 61 <= 8);
+  const past = { [a.id]: { bug: { tasks: 3, firstTry: 1 / 3 } } };
+  const pooled = f.run(`r.score(${JSON.stringify(a)}, 'bug', ${JSON.stringify(past)})`);
+  assert.ok(Math.abs(pooled.value - 55.5) < 1e-9); // n=4, passes=2, prior=61.
+  assert.match(pooled.evidence, /own 1\/1/);
+  assert.match(pooled.evidence, /history 3 tasks, 33% first try/);
+  assert.match(pooled.evidence, /AA 61/);
+  a.own = null;
+  const historyOnly = f.run(`r.score(${JSON.stringify(a)}, 'bug', ${JSON.stringify(past)})`);
+  assert.ok(Math.abs(historyOnly.value - 344 / 7) < 1e-9);
+  a.public = null;
+  const neutral = f.run(`r.score(${JSON.stringify(a)}, 'bug', ${JSON.stringify(past)})`);
+  assert.ok(Math.abs(neutral.value - 300 / 7) < 1e-9);
+  assert.match(neutral.evidence, /neutral prior/);
+});
+
+test('one own pass without public data uses the neutral prior and cannot leapfrog stronger evidence', t => {
+  const f = fixture(t);
+  const unknown = entry('codex', 'unknown', null, 0.5, { public: null,
+    own: { byType: { bug: { passed: 1, total: 1 } } } });
+  const input = catalog(unknown, entry('claude', 'a', 61, 0.1), entry('gemini', 'b', 70, 2),
+    entry('codex', 'best', 79, 20));
+  const rows = f.run(`r.ladder('bug', ${JSON.stringify(input)}, {}, {})`);
+  const row = rows.find(row => row.id === unknown.id);
+  assert.equal(row.score.value, 76); // Median 70, one success with weight 1/5.
+  assert.match(row.score.evidence, /own 1\/1/);
+  assert.match(row.score.evidence, /neutral prior 70/);
+  assert.equal(rows.at(-1).id, 'codex:best');
+});
+
+test('one primary public metric prevents a lone SWE-bench figure from outranking AA evidence', t => {
+  const f = fixture(t);
+  const lone = entry('gemini', 'swe-only', null, 0.5, {
+    public: { source: 'benchlm.ai', date, swebench: 99, price: { input: 0.5, output: 0.5 } },
+  });
+  const input = catalog(entry('codex', 'a', 61, 0.1), entry('claude', 'b', 70, 2),
+    entry('codex', 'best', 79, 20), lone);
+  const rows = f.run(`r.ladder('bug', ${JSON.stringify(input)}, {}, {})`);
+  const row = rows.find(row => row.id === lone.id);
+  assert.equal(row.score.value, 70);
+  assert.match(row.score.evidence, /neutral prior 70/);
+  assert.doesNotMatch(row.score.evidence, /SWE-bench 99/);
+  assert.equal(rows.at(-1).id, 'codex:best');
+});
+
+test('without AA, the most-covered metric is SWE-bench and Terminal-Bench-only uses its median', t => {
+  const f = fixture(t);
+  const a = entry('codex', 'a', null, 0.5, { public: { source: 'benchlm.ai', date, swebench: 70,
+    price: { input: 0.5, output: 0.5 } } });
+  const best = entry('claude', 'best', null, 20, { public: { source: 'benchlm.ai', date, swebench: 80,
+    price: { input: 20, output: 20 } } });
+  const other = entry('gemini', 'terminal-only', null, 0.8, { public: { source: 'benchlm.ai', date, terminalbench: 99,
+    price: { input: 0.8, output: 0.8 } } });
+  const excluded = entry('codex', 'offline', 100, 0, { available: { ok: false } });
+  const input = catalog(a, best, other, excluded, entry('claude', 'opus', 100, 0), entry('claude', 'fable', 100, 0));
+  const rows = f.run(`r.ladder('bug', ${JSON.stringify(input)}, {}, {})`);
+  const row = rows.find(row => row.id === other.id);
+  assert.equal(row.score.value, 75);
+  assert.match(row.score.evidence, /neutral prior 75/);
+  assert.equal(rows.at(-1).id, best.id);
+  assert.match(rows.at(-1).score.evidence, /BenchLM SWE-bench 80/);
+});
+
+test('metric coverage ties prefer AA, SWE-bench, Terminal-Bench, then LiveCodeBench', t => {
+  const f = fixture(t);
+  const metrics = ['codingIndex', 'swebench', 'terminalbench', 'livecodebench'];
+  for (let i = 0; i < metrics.length - 1; i++) {
+    const a = entry('codex', 'a', null, 2, { public: { [metrics[i]]: 60, [metrics[i + 1]]: 99 } });
+    const b = entry('codex', 'b', null, 2, { public: { [metrics[i]]: 80, [metrics[i + 1]]: 50 } });
+    assert.equal(f.run(`r.ladder('docs', ${JSON.stringify(catalog(a, b))}, {}, {})`).at(-1).id, b.id);
+  }
+});
+
+test('efforts use medium then high with nearest lower fallback before any higher value', t => {
+  const f = fixture(t);
+  const base = candidates();
+  const rows = f.run(`r.ladder('bug', ${JSON.stringify(base)}, {}, {})`);
+  assert.deepEqual(rows.map(row => row.effort), ['medium', 'high', 'high']);
+  for (const [efforts, first, step] of [
+    [['low', 'xhigh'], 'low', 'low'], [['xhigh', 'max'], 'xhigh', 'xhigh'],
+    [['high', 'low'], 'low', 'high'], [['minimal', 'none'], 'minimal', 'minimal'],
+    [[], null, null],
+  ]) {
+    for (const model of Object.values(base.models)) model.efforts = efforts;
+    const rows = f.run(`r.ladder('bug', ${JSON.stringify(base)}, {}, {})`);
+    assert.deepEqual(rows.map(row => row.effort), [first, step, step]);
+  }
+  const single = entry('codex', 'only', 80, 2);
+  assert.equal(f.run(`r.ladder('bug', ${JSON.stringify(catalog(single))}, {}, {})`)[0].effort, 'high');
+  const noEffort = fixture(t, catalog({ ...single, efforts: [] }));
+  const out = noEffort.brief(['--types', 'bug']);
+  assert.equal(out.status, 0, out.stderr); assert.equal(out.stderr, '');
+  assert.doesNotMatch(out.stdout, /@/);
+});
+
+test('the 85% bar tolerates floating-point noise but excludes genuinely lower scores', t => {
+  const f = fixture(t);
+  const cheap = entry('claude', 'cheap', 52.87, 0.5), best = entry('codex', 'best', 62.2, 20);
+  assert.ok(best.public.codingIndex * 0.85 > cheap.public.codingIndex);
+  const rows = f.run(`r.ladder('bug', ${JSON.stringify(catalog(cheap, best))}, {}, {})`);
+  assert.equal(rows[0].id, cheap.id);
+  cheap.public.codingIndex -= 1e-6;
+  assert.equal(f.run(`r.ladder('bug', ${JSON.stringify(catalog(cheap, best))}, {}, {})`)[0].id, best.id);
+});
+
+test('route import and brief tolerate missing or malformed aliases; cost defaults are loaded lazily', t => {
+  const f = fixture(t, catalog(entry('codex', 'subscription', null, null, { public: null })));
+  // A private plugin copy avoids changing shared repository data while other tests run.
+  const plugin = join(f.root, 'plugin');
+  mkdirSync(plugin);
+  for (const dir of ['lib', 'scripts', 'data']) cpSync(new URL(`../plugins/orchestra/${dir}/`, import.meta.url), join(plugin, dir), { recursive: true });
+  const aliasFile = join(plugin, 'data', 'model-aliases.json');
+  const copiedRoute = pathToFileURL(join(plugin, 'lib', 'route.mjs')).href;
+  const copiedCLI = pathToFileURL(join(plugin, 'scripts', 'models.mjs')).href;
+  for (const content of [null, '{broken', 'null', '{}', '{"providerCostClasses":null}',
+    '{"providerCostClasses":[]}', '{"providerCostClasses":{"codex":"wrong"}}']) {
+    if (content === null) rmSync(aliasFile); else writeFileSync(aliasFile, content);
+    const out = f.child(`const r = await import(${JSON.stringify(copiedRoute)});
+      const entry = { provider: 'codex', public: null };
+      const before = r.costClass(entry);
+      const { writeFileSync } = await import('node:fs');
+      writeFileSync(${JSON.stringify(aliasFile)}, JSON.stringify({ providerCostClasses: { codex: '$$$$' } }));
+      console.log(JSON.stringify([before, r.costClass(entry)]));`);
+    assert.equal(out.status, 0, out.stderr); assert.equal(out.stderr, '');
+    assert.deepEqual(JSON.parse(out.stdout), ['$$', '$$$$']);
+    if (content === null) rmSync(aliasFile); else writeFileSync(aliasFile, content);
+    const brief = f.child(`globalThis.fetch = () => { throw new Error('unexpected network'); };
+      process.argv = [process.execPath, 'models.mjs', 'brief', '--types', 'bug'];
+      await import(${JSON.stringify(copiedCLI)});`);
+    assert.equal(brief.status, 0, brief.stderr); assert.equal(brief.stderr, '');
+    assert.match(brief.stdout, /^bug .*codex:subscription.*\$\$/m);
+    assert.match(brief.stdout, /^Limits:/m);
+  }
 });
