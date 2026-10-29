@@ -1,0 +1,7 @@
+{
+  "session_id": "limits-fixture",
+  "rate_limits": {
+    "five_hour": { "used_percentage": 12, "resets_at": 1793404800 },
+    "seven_day": { "used_percentage": 34, "resets_at": "2026-11-05T00:00:00Z" }
+  }
+}
