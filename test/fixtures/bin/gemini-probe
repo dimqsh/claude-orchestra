@@ -1,0 +1,17 @@
+#!/usr/bin/env node
+const { appendFileSync } = require('node:fs');
+const args = process.argv.slice(2);
+function log(stage) {
+  if (process.env.DISCOVERY_LOG) appendFileSync(process.env.DISCOVERY_LOG,
+    JSON.stringify({ command: 'gemini', args, stage, time: Date.now() }) + '\n');
+}
+log('start');
+setTimeout(() => {
+  log('end');
+  if (!(args.length === 2 && args[0] === '-p' && args[1] === 'Reply OK') &&
+      !(args.length === 4 && args[0] === '-m' && args[2] === '-p' && args[3] === 'Reply OK')) {
+    console.error('unexpected gemini arguments'); process.exitCode = 1;
+  } else if (process.env.GEMINI_PROBE_ERROR) {
+    console.error(process.env.GEMINI_PROBE_ERROR); process.exitCode = 1;
+  } else console.log('OK');
+}, 30);

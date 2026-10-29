@@ -1,0 +1,23 @@
+{
+  "data": [
+    {
+      "id": "fixture-sol", "name": "GPT-6.1 Sol", "slug": "gpt-6-1-sol",
+      "model_creator": { "name": "OpenAI" },
+      "evaluations": { "artificial_analysis_coding_index": 61.2, "livecodebench": 78.0 },
+      "pricing": { "price_1m_input_tokens": 1.25, "price_1m_output_tokens": 10.0, "price_1m_blended_3_to_1": 3.4375 },
+      "median_output_tokens_per_second": 140
+    },
+    {
+      "id": "fixture-sonnet", "name": "Claude Sonnet 5.5", "slug": "claude-sonnet-5-5",
+      "model_creator": { "name": "Anthropic" },
+      "evaluations": { "artificial_analysis_coding_index": 60, "livecodebench": 76 },
+      "pricing": { "price_1m_input_tokens": 3, "price_1m_output_tokens": 15, "price_1m_blended_3_to_1": 6 },
+      "median_output_tokens_per_second": 90
+    },
+    {
+      "id": "fixture-lookalike", "name": "GPT-6 Sol", "slug": "gpt-6-sol",
+      "model_creator": { "name": "OpenAI" },
+      "evaluations": { "artificial_analysis_coding_index": 99 }
+    }
+  ]
+}
