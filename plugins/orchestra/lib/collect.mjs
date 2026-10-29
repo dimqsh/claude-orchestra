@@ -337,7 +337,11 @@ export async function collectActive({ sinceMinutes = 120 } = {}) {
   files.sort((a, b) => b.mtime - a.mtime);
   const sessions = [];
   for (const { path } of files) {
-    try { sessions.push(await collectSession({ transcriptPath: path })); } catch { /* file removed or replaced during scan */ }
+    try {
+      const { state } = await parseFile(path);
+      if (state.cwd?.split(sep).some(directory => directory.startsWith('orchestra-bench-'))) continue;
+      sessions.push(await collectSession({ transcriptPath: path }));
+    } catch { /* file removed or replaced during scan */ }
   }
   return { version: 1, generatedAt: new Date().toISOString(), sessions };
 }

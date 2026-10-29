@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 import { readFile, mkdir, rename } from 'node:fs/promises';
+import { readFileSync, writeFileSync, renameSync, rmSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { dirname, join, basename, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { boardPath, projectDir, canonicalPath, atomicJSON } from '../lib/paths.mjs';
@@ -8,6 +10,13 @@ import { renderBoard } from '../lib/render.mjs';
 
 const executors = ['codex', 'claude', 'gemini', 'kimi', 'sonnet', 'opus', 'haiku', 'fable'];
 const statuses = ['queued', 'running', 'review', 'rework', 'done', 'failed'];
+function writeBoardSync(path, board) {
+  const temp = join(dirname(path), `.${process.pid}.${randomUUID().slice(0, 8)}.tmp`);
+  try {
+    writeFileSync(temp, `${JSON.stringify(board)}\n`, { mode: 0o600, flag: 'wx' });
+    renameSync(temp, path);
+  } finally { rmSync(temp, { force: true }); }
+}
 async function attemptTokens(board, task, attempt, cwd) {
   const earlier = task.attempts.filter(previous => previous.n < attempt.n);
   if (earlier.some(previous => previous.tokens == null)) return null;
@@ -18,7 +27,8 @@ async function attemptTokens(board, task, attempt, cwd) {
     const linked = session.agents.filter(agent => agent.taskId === task.id);
     if (!linked.length) return null;
     // SendMessage resumes the same agent, so startedAt cannot delimit its new work.
-    return linked.reduce((sum, agent) => sum + agent.tokens.spent, 0) - earlier.reduce((sum, previous) => sum + previous.tokens, 0);
+    const delta = linked.reduce((sum, agent) => sum + agent.tokens.spent, 0) - earlier.reduce((sum, previous) => sum + previous.tokens, 0);
+    return delta < 0 ? null : delta;
   } catch { return null; } // A board can be used before its session transcript exists.
 }
 function fields(args, allowed) {
@@ -99,6 +109,15 @@ export async function runBoard(argv = process.argv.slice(2)) {
       ...fields(args.slice(1), ['branch', 'worktree', 'base', 'landedAt']) };
   } else if (command === 'set' || command === 'exec') {
     if (args.length !== 3) throw new Error('Provide an id and a value');
+    let tokens = null;
+    if (command === 'set' && ['done', 'rework', 'failed'].includes(value)) {
+      const task = board.tasks.find(task => task.id === id);
+      if (!task) throw new Error(`Task #${id} not found`);
+      const open = Array.isArray(task.attempts) && task.attempts.findLast(attempt => attempt.outcome === null);
+      if (open) tokens = await attemptTokens(board, task, open, cwd);
+    }
+    // Token collection does I/O. Re-read afterwards, then keep the transition and write synchronous.
+    board = JSON.parse(readFileSync(path, 'utf8'));
     const task = board.tasks.find(task => task.id === id);
     if (!task) throw new Error(`Task #${id} not found`);
     if (command === 'set') {
@@ -111,7 +130,7 @@ export async function runBoard(argv = process.argv.slice(2)) {
           startedAt: now, endedAt: null, outcome: null, tokens: null });
       }
       if (open && ['done', 'rework', 'failed'].includes(value)) {
-        open.tokens = await attemptTokens(board, task, open, cwd);
+        open.tokens = tokens;
         open.endedAt = now;
         open.outcome = value === 'done' ? 'accepted' : value;
       }
@@ -128,7 +147,8 @@ export async function runBoard(argv = process.argv.slice(2)) {
   } else if (command === 'finish' && args.length === 1) board.finishedAt = now;
   else throw new Error('Unknown board command');
   board.updatedAt = now;
-  await atomicJSON(path, board);
+  if (command === 'set' || command === 'exec') writeBoardSync(path, board);
+  else await atomicJSON(path, board);
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   try { const output = await runBoard(); if (output !== undefined) console.log(output); }

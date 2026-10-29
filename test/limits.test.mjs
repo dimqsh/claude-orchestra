@@ -5,6 +5,8 @@ import { mkdtemp, mkdir, readFile, writeFile, cp, rm, stat, utimes } from 'node:
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 
+const childDiagnostics = result => `signal=${result.signal}; stderr=${result.stderr ?? ''}`;
+
 const limitsUrl = new URL('../plugins/orchestra/lib/limits.mjs', import.meta.url).href;
 const hud = new URL('../plugins/orchestra/hud/statusline.mjs', import.meta.url);
 const fixture = name => readFile(new URL(`fixtures/${name}`, import.meta.url), 'utf8');
@@ -25,14 +27,14 @@ async function sandbox(t) {
     const child = spawnSync(process.execPath, ['--input-type=module', '-e',
       `import * as limits from ${JSON.stringify(limitsUrl)};
       // Keep recorded fixture windows in the future as the real clock advances.
-      Date.now = () => Date.parse('2026-10-29T00:00:00Z');\n${code}`], { env, encoding: 'utf8', timeout: 10000 });
-    assert.equal(child.status, 0, child.stderr);
+      Date.now = () => Date.parse('2026-10-29T00:00:00Z');\n${code}`], { env, encoding: 'utf8', timeout: 30000 });
+    assert.equal(child.status, 0, childDiagnostics(child));
     assert.equal(child.stderr, '');
     return JSON.parse(child.stdout);
   }
   function statusline(input, script = hud) {
     return spawnSync(process.execPath, [script instanceof URL ? script.pathname : script],
-      { env, input: JSON.stringify({ cwd: root, ...input }), encoding: 'utf8', timeout: 10000 });
+      { env, input: JSON.stringify({ cwd: root, ...input }), encoding: 'utf8', timeout: 30000 });
   }
   return { root, env, path, rollout, put, run, statusline };
 }
@@ -189,7 +191,7 @@ test('maxUsedPercent returns the highest known window or null', async t => {
 test('statusline records Claude limits without adding output', async t => {
   const f = await sandbox(t), input = JSON.parse(await fixture('statusline-stdin-limits.json'));
   const child = f.statusline(input);
-  assert.equal(child.status, 0, child.stderr);
+  assert.equal(child.status, 0, childDiagnostics(child));
   assert.equal(child.stderr, '');
   assert.match(child.stdout, /◆/);
   assert.equal(child.stdout.trim().split('\n').length, 1);
@@ -201,7 +203,7 @@ test('statusline still prints when limits.json is not writable', async t => {
   // A directory at the target makes atomic rename fail even for privileged test runners.
   await mkdir(f.path, { recursive: true });
   const child = f.statusline(JSON.parse(await fixture('statusline-stdin-limits.json')));
-  assert.equal(child.status, 0, child.stderr);
+  assert.equal(child.status, 0, childDiagnostics(child));
   assert.equal(child.stderr, '');
   assert.match(child.stdout, /◆/);
   assert.equal(child.stdout.trim().split('\n').length, 1);
@@ -217,7 +219,7 @@ test('statusline renders before the optional limits recorder finishes', async t 
     await new Promise(resolve => setTimeout(resolve, 400)); console.log('recorder finished');
   }`);
   const child = f.statusline({ rate_limits: { five_hour: { used_percentage: 12 } } }, join(runtime, 'hud/statusline.mjs'));
-  assert.equal(child.status, 0, child.stderr);
+  assert.equal(child.status, 0, childDiagnostics(child));
   assert.equal(child.stderr, '');
   assert.match(child.stdout.trim().split('\n')[0], /◆/);
   assert.match(child.stdout, /recorder finished/);

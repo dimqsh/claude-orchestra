@@ -18,13 +18,15 @@ const codexScript = fileURLToPath(new URL('../scripts/codex-task.mjs', import.me
 /** Injectable runner: ({ command, args, cwd, input, timeout }) -> { code, stdout, stderr }. */
 function commandRunner({ command, args, cwd, input = '', timeout }) {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { cwd, stdio: ['pipe', 'pipe', 'pipe'], timeout });
+    const child = spawn(command, args, { cwd, stdio: ['pipe', 'pipe', 'pipe'] });
+    const timer = timeout == null ? null : setTimeout(() => child.kill(), timeout);
+    const failed = error => { clearTimeout(timer); reject(error); };
     let stdout = '', stderr = '';
     child.stdout.setEncoding('utf8').on('data', data => { stdout += data; });
     child.stderr.setEncoding('utf8').on('data', data => { stderr += data; });
-    child.on('error', reject);
-    child.stdin.on('error', error => { if (error.code !== 'EPIPE') reject(error); });
-    child.on('close', (code, signal) => resolve({ code, stdout, stderr, signal }));
+    child.on('error', failed);
+    child.stdin.on('error', error => { if (error.code !== 'EPIPE') failed(error); });
+    child.on('close', (code, signal) => { clearTimeout(timer); resolve({ code, stdout, stderr, signal }); });
     child.stdin.end(input);
   });
 }
@@ -178,6 +180,7 @@ async function runTask(entry, type, runner) {
     const response = await runner(requestFor(entry, cwd, input));
     const usage = measuredUsage(entry, response, type, (performance.now() - started) / 1000);
     const check = await commandRunner({ command: process.execPath, args: [join(fixture, 'check.mjs'), cwd], cwd, timeout: 10000 });
+    if (check.signal || check.code === null) throw runnerFailure('check timed out', usage.tokens);
     return { passed: check.code === 0 ? 1 : 0, total: 1, ...usage };
   } finally { await rm(cwd, { recursive: true, force: true }); }
 }
@@ -285,8 +288,8 @@ export async function runBenchCli(argv) {
           for (const entry of skipped) {
             const model = current.models[entry.id];
             if (!model) continue;
-            if (model.own == null || model.own.skipped) model.own = own;
-            else kept.add(entry.id);
+            if (Object.keys(model.own?.byType ?? {}).length > 0) kept.add(entry.id);
+            else model.own = own;
           }
         });
         for (const entry of skipped) console.log(`${entry.id}: ${kept.has(entry.id) ? 'kept (already benchmarked)' : 'skipped (not picked)'}`);

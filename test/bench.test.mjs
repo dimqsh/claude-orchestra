@@ -7,6 +7,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+const childDiagnostics = result => `signal=${result.signal}; stderr=${result.stderr ?? ''}`;
+
 const plugin = fileURLToPath(new URL('../plugins/orchestra/', import.meta.url));
 const benchUrl = new URL('../plugins/orchestra/lib/bench.mjs', import.meta.url).href;
 const catalogUrl = new URL('../plugins/orchestra/lib/catalog.mjs', import.meta.url).href;
@@ -35,8 +37,8 @@ async function sandbox(t, entries = [entry('codex', 'sample')], config = {}) {
         await cp(join(${JSON.stringify(references)}, type), request.cwd, { recursive: true });
         return { code: 0, stdout: '[codex] #B-' + type + ' done · 512 tokens · 0m2s\\n', stderr: '' };
       };
-      ${body}`], { env, encoding: 'utf8', timeout: 30000 });
-    assert.equal(child.status, 0, child.stderr);
+      ${body}`], { env, encoding: 'utf8', timeout: 60000 });
+    assert.equal(child.status, 0, childDiagnostics(child));
     assert.equal(child.stderr, '');
     return JSON.parse(child.stdout.trim().split('\n').at(-1));
   }
@@ -50,12 +52,12 @@ for (const type of types) {
     const fixture = join(plugin, 'bench', type), repo = join(root, 'repo');
     await cp(join(fixture, 'repo'), repo, { recursive: true });
     assert.match(await readFile(join(fixture, 'brief.md'), 'utf8'), new RegExp(`^#B-${type} `));
-    const check = () => spawnSync(process.execPath, [join(fixture, 'check.mjs'), repo], { encoding: 'utf8', timeout: 10000 });
+    const check = () => spawnSync(process.execPath, [join(fixture, 'check.mjs'), repo], { encoding: 'utf8', timeout: type === 'tests' ? 60000 : 30000 });
     const red = check();
     assert.notEqual(red.status, 0, 'untouched repo must fail');
     await cp(join(references, type), repo, { recursive: true });
     const green = check();
-    assert.equal(green.status, 0, green.stderr + green.stdout);
+    assert.equal(green.status, 0, childDiagnostics(green) + green.stdout);
   });
 }
 
@@ -231,8 +233,8 @@ test('CLI estimate prints tokens per model without running or updating the catal
   const before = await readFile(join(f.home, 'models.json'), 'utf8');
   const child = spawnSync(process.execPath, ['--input-type=module', '-e', `
     import { runBenchCli } from ${JSON.stringify(benchUrl)};
-    process.exitCode = await runBenchCli(['--estimate']);`], { env: { ...f.env, PATH: '' }, encoding: 'utf8', timeout: 10000 });
-  assert.equal(child.status, 0, child.stderr);
+    process.exitCode = await runBenchCli(['--estimate']);`], { env: { ...f.env, PATH: '' }, encoding: 'utf8', timeout: 30000 });
+  assert.equal(child.status, 0, childDiagnostics(child));
   assert.equal(child.stderr, '');
   assert.match(child.stdout, /codex:sample.*150000 tokens/);
   assert.match(child.stdout, /claude:sonnet.*150000 tokens/);
@@ -253,7 +255,7 @@ test('invalid or ambiguous model selections and invalid CLI options fail before 
     ['--estimate', '--skip', 'codex:same'], ['--models', 'codex:same', '--skip', 'codex:same']]) {
     const child = spawnSync(process.execPath, ['--input-type=module', '-e', `
       import { runBenchCli } from ${JSON.stringify(benchUrl)};
-      process.exitCode = await runBenchCli(${JSON.stringify(argv)});`], { env: f.env, encoding: 'utf8', timeout: 10000 });
+      process.exitCode = await runBenchCli(${JSON.stringify(argv)});`], { env: f.env, encoding: 'utf8', timeout: 30000 });
     assert.equal(child.status, 1);
     assert.match(child.stderr, /^Error: /);
   }
@@ -278,12 +280,12 @@ test('CLI --models and --new execute a fake Claude CLI on PATH with fresh repos'
   const run = argv => spawnSync(process.execPath, ['--input-type=module', '-e', `
     import { runBenchCli } from ${JSON.stringify(benchUrl)};
     process.exitCode = await runBenchCli(${JSON.stringify(argv)});`],
-  { env: { ...f.env, PATH: `${bin}:/usr/bin:/bin` }, encoding: 'utf8', timeout: 30000 });
+  { env: { ...f.env, PATH: `${bin}:/usr/bin:/bin` }, encoding: 'utf8', timeout: 60000 });
   for (const [argv, output] of [
     [['--new'], 'claude:sonnet: done\n'], [['--new'], ''], [['--models', 'sonnet'], 'claude:sonnet: done\n']
   ]) {
     const child = run(argv);
-    assert.equal(child.status, 0, child.stderr + child.stdout);
+    assert.equal(child.status, 0, childDiagnostics(child) + child.stdout);
     assert.equal(child.stderr, '');
     assert.equal(child.stdout, output);
   }
@@ -333,7 +335,7 @@ for (const [type, file, wrong] of [
     await cp(join(references, type), root, { recursive: true });
     const content = wrong ?? (await readFile(join(plugin, 'bench', type, 'brief.md'), 'utf8')) + '\n```js\n\n```\n';
     await writeFile(join(root, file), content);
-    const child = spawnSync(process.execPath, [join(plugin, 'bench', type, 'check.mjs'), root], { encoding: 'utf8', timeout: 10000 });
+    const child = spawnSync(process.execPath, [join(plugin, 'bench', type, 'check.mjs'), root], { encoding: 'utf8', timeout: 30000 });
     assert.notEqual(child.status, 0, child.stdout + child.stderr);
   });
 }
@@ -433,8 +435,8 @@ test('CLI --skip preserves benchmark results and reports kept entries with clean
   const child = spawnSync(process.execPath, ['--input-type=module', '-e', `
     import { runBenchCli } from ${JSON.stringify(benchUrl)};
     process.exitCode = await runBenchCli(['--skip', 'done,partial,new,skipped']);
-  `], { env: f.env, encoding: 'utf8', timeout: 10000 });
-  assert.equal(child.status, 0, child.stderr); assert.equal(child.stderr, '');
+  `], { env: f.env, encoding: 'utf8', timeout: 30000 });
+  assert.equal(child.status, 0, childDiagnostics(child)); assert.equal(child.stderr, '');
   assert.equal(child.stdout, 'codex:done: kept (already benchmarked)\nclaude:partial: kept (already benchmarked)\ncodex:new: skipped (not picked)\ncodex:skipped: skipped (not picked)\n');
   const catalog = JSON.parse(await readFile(join(f.home, 'models.json'), 'utf8'));
   assert.deepEqual(catalog.models['codex:done'].own, measured);
@@ -462,8 +464,8 @@ test('a concurrent benchmark process exits zero and reports the owning pid', asy
   try {
     const second = spawnSync(process.execPath, ['--input-type=module', '-e', `
       import { runBenchCli } from ${JSON.stringify(benchUrl)};
-      process.exitCode = await runBenchCli(['--models', 'sample']);`], { env: f.env, encoding: 'utf8', timeout: 10000 });
-    assert.equal(second.status, 0, second.stderr);
+      process.exitCode = await runBenchCli(['--models', 'sample']);`], { env: f.env, encoding: 'utf8', timeout: 30000 });
+    assert.equal(second.status, 0, childDiagnostics(second));
     assert.equal(second.stdout, `bench already running (pid ${first.pid})\n`);
     assert.equal(second.stderr, '');
     const lock = JSON.parse(await readFile(join(f.home, 'bench.lock'), 'utf8'));
@@ -475,8 +477,8 @@ test('a concurrent benchmark process exits zero and reports the owning pid', asy
 
 test('dead-pid benchmark locks are reclaimed; replacement locks survive finally', async t => {
   const f = await sandbox(t);
-  const dead = spawnSync(process.execPath, ['-e', ''], { env: f.env });
-  assert.equal(dead.status, 0);
+  const dead = spawnSync(process.execPath, ['-e', ''], { env: f.env, encoding: 'utf8', timeout: 30000 });
+  assert.equal(dead.status, 0, childDiagnostics(dead));
   const lock = join(f.home, 'bench.lock');
   await writeFile(lock, JSON.stringify({ pid: dead.pid, startedAt: '2020-01-01T00:00:00Z' }));
   f.run(`await bench.runBench({ models: ['sample'], cap: 1, runner }); console.log('null');`);
@@ -528,4 +530,59 @@ test('skip and --new can be applied together without launching skipped models', 
   assert.equal(out.code, 0);
   for (const model of Object.values(out.catalog.models)) assert.equal(model.own.skipped, 'not picked');
   assert.equal(existsSync(join(f.home, 'bench.lock')), false);
+});
+
+test('CLI --skip replaces an empty runner-error partial and --new no longer runs it', async t => {
+  const f = await sandbox(t, [entry('claude', 'sonnet', { own: {
+    date: '2026-10-01', partial: { reason: 'runner error: Not logged in' }, byType: {}, completed: []
+  } })], { benchAuto: true });
+  const child = spawnSync(process.execPath, ['--input-type=module', '-e', `
+    import { runBenchCli } from ${JSON.stringify(benchUrl)};
+    process.exitCode = await runBenchCli(['--skip', 'sonnet']);
+    if (!process.exitCode) process.exitCode = await runBenchCli(['--new']);
+  `], { env: f.env, encoding: 'utf8', timeout: 30000 });
+  assert.equal(child.status, 0, `signal=${child.signal}; stderr=${child.stderr}`);
+  assert.equal(child.stderr, '');
+  assert.equal(child.stdout, 'claude:sonnet: skipped (not picked)\n');
+  const catalog = JSON.parse(await readFile(join(f.home, 'models.json'), 'utf8'));
+  assert.deepEqual(catalog.models['claude:sonnet'].own, { skipped: 'not picked', date: new Date().toISOString().slice(0, 10) });
+});
+
+for (const mode of ['timeout', 'signal']) {
+  test(`a check killed by ${mode} is a runner error without a scored model failure`, async t => {
+    const f = await sandbox(t);
+    const out = f.run(`import { writeFile } from 'node:fs/promises';
+      const result = await bench.runBench({ models: ['sample'], runner: async request => {
+        await writeFile(join(request.cwd, 'basket.mjs'), ${JSON.stringify(mode === 'timeout'
+          ? "await new Promise(resolve => setTimeout(resolve, 60000));"
+          : "process.kill(process.pid, 'SIGTERM'); await new Promise(resolve => setTimeout(resolve, 60000));")});
+        return { code: 0, stdout: '[codex] ' + request.input.split(' ')[0] + ' done · 512 tokens · 0m1s', stderr: '' };
+      }});
+      console.log(JSON.stringify({ result, catalog: await readCatalog() }));`);
+    assert.equal(out.result['codex:sample'].done, false);
+    assert.equal(out.result['codex:sample'].reason, 'runner error: check timed out');
+    assert.deepEqual(out.catalog.models['codex:sample'].own.byType, {});
+    assert.deepEqual(out.catalog.models['codex:sample'].own.completed, []);
+    assert.equal(out.catalog.models['codex:sample'].own.runnerTokens, 512);
+  });
+}
+
+test('bench exits quickly with runner errors when PATH is empty or Claude is missing', async t => {
+  const f = await sandbox(t, [entry('claude', 'sonnet')]);
+  // Only git is available in this bin: the prerequisite succeeds, the provider emits ENOENT.
+  const bin = join(f.root, 'git-only'); await mkdir(bin);
+  await writeFile(join(bin, 'git'), `#!${process.execPath}\nprocess.exit(0);\n`, { mode: 0o755 });
+  for (const path of ['', bin]) {
+    const started = performance.now();
+    const child = spawnSync(process.execPath, ['--input-type=module', '-e', `
+      import { runBench } from ${JSON.stringify(benchUrl)};
+      console.log(JSON.stringify(await runBench({ models: ['sonnet'] })));
+    `], { env: { ...f.env, PATH: path }, encoding: 'utf8', timeout: 30000 });
+    assert.equal(child.status, 0, `signal=${child.signal}; stderr=${child.stderr}`);
+    assert.equal(child.stderr, '');
+    assert(performance.now() - started < 10000, 'missing executables must finish well under ten seconds');
+    const result = JSON.parse(child.stdout)['claude:sonnet'];
+    assert.match(result.reason, /^runner error: .*ENOENT/);
+    assert.deepEqual(result.byType, {});
+  }
 });

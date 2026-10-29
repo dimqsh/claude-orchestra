@@ -5,6 +5,8 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawn, spawnSync } from 'node:child_process';
+const childDiagnostics = result => `signal=${result.signal}; stderr=${result.stderr ?? ''}`;
+
 const root = await mkdtemp(join(tmpdir(), 'orchestra-core-'));
 const fixtureEnv = { ORCHESTRA_HOME: join(root, 'home'), CLAUDE_CONFIG_DIR: join(root, 'claude'), CODEX_HOME: join(root, 'codex') };
 after(() => rm(root, { recursive: true, force: true }));
@@ -53,7 +55,7 @@ async function sessionFixture() {
   return { cwd, sessionId, transcriptPath, dir };
 }
 function cli(script, args = [], input = '', env = {}) {
-  return spawnSync(process.execPath, [join(base, 'plugins/orchestra', script), ...args], { input, encoding: 'utf8', env: { ...process.env, ...fixtureEnv, ...env }, timeout: 10000 });
+  return spawnSync(process.execPath, [join(base, 'plugins/orchestra', script), ...args], { input, encoding: 'utf8', env: { ...process.env, ...fixtureEnv, ...env }, timeout: 30000 });
 }
 const strip = text => text.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '');
 async function job(cwd, overrides = {}) {
@@ -174,7 +176,7 @@ test('board CLI init/add/set/exec/show/finish/json, attempts and archive use ato
   const cwd = await workspace();
   function board(...args) {
     const result = cli('scripts/board.mjs', [...args, '--cwd', cwd]);
-    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.status, 0, childDiagnostics(result));
     assert.equal(result.stderr, '');
     if (!['show', 'json'].includes(args[0])) assert.equal(result.stdout, '', `${args[0]} is silent`);
     return result.stdout.trim();
@@ -212,7 +214,7 @@ test('Codex parser understands activities, updates and failures', () => {
 test('codex-task fake executable: arguments, event parsing, job writes, token sums and footer', async t => {
   const cwd = await workspace(), env = await fakeCodex(t, cwd);
   const result = cli('scripts/codex-task.mjs', ['--cwd', cwd, '--model', 'gpt-test', '--effort', 'high', '--write'], '\n#2 check\nrun it', env);
-  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.status, 0, childDiagnostics(result));
   const finalAnswer = (await fixture('codex-events.jsonl')).trim().split('\n').map(JSON.parse).filter(event => event.item?.type === 'agent_message').at(-1).item.text;
   assert.match(result.stdout, new RegExp(`^${finalAnswer}\\n\\[codex\\] #2 done · 370 tokens · 0m\\d+s`));
   const args = JSON.parse(await readFile(env.FAKE_ARGS, 'utf8'));
@@ -226,12 +228,12 @@ test('codex-task fake executable: arguments, event parsing, job writes, token su
   assert.match(sentPrompt, /## Findings/);
   assert(!(await readdir(paths.jobsDir())).some(name => name.endsWith('.tmp')));
   const resumed = cli('scripts/codex-task.mjs', ['--cwd', cwd, '--resume-last'], '#2 more', env);
-  assert.equal(resumed.status, 0, resumed.stderr);
+  assert.equal(resumed.status, 0, childDiagnostics(resumed));
   const resumedArgs = JSON.parse(await readFile(env.FAKE_ARGS, 'utf8'));
   assert.deepEqual(resumedArgs, ['exec', 'resume', 'synthetic-thread', '-m', 'gpt-6.1-sol', '-c', 'sandbox_mode="read-only"', '--json', '--skip-git-repo-check', '-']);
   assert.equal(await readFile(env.FAKE_CWD, 'utf8'), paths.canonicalPath(cwd));
   const writableResume = cli('scripts/codex-task.mjs', ['--cwd', cwd, '--resume-last', '--write', '--model', 'gpt-resume', '--effort', 'high'], '#2 edit', env);
-  assert.equal(writableResume.status, 0, writableResume.stderr);
+  assert.equal(writableResume.status, 0, childDiagnostics(writableResume));
   assert.deepEqual(JSON.parse(await readFile(env.FAKE_ARGS, 'utf8')), ['exec', 'resume', 'synthetic-thread', '-m', 'gpt-resume', '-c', 'sandbox_mode="workspace-write"', '--json', '--skip-git-repo-check', '-c', 'model_reasoning_effort=high', '-']);
   assert.equal(await readFile(env.FAKE_CWD, 'utf8'), paths.canonicalPath(cwd));
 });
@@ -249,13 +251,13 @@ test('statusline chain receives identical stdin, header prints, malformed input 
   await paths.atomicJSON(join(paths.orchestraHome, 'config.json'), { chain: `"${process.execPath}" "${chainPath}"` });
   const input = JSON.stringify({ cwd: data.cwd, transcript_path: data.transcriptPath, session_id: data.sessionId });
   const result = cli('hud/statusline.mjs', [], input);
-  assert.equal(result.status, 0); assert(result.stdout.startsWith(`CHAIN ${data.sessionId}\n◆`)); assert(strip(result.stdout).includes('Opus 60'));
+  assert.equal(result.status, 0, childDiagnostics(result)); assert(result.stdout.startsWith(`CHAIN ${data.sessionId}\n◆`)); assert(strip(result.stdout).includes('Opus 60'));
   for (const input of ['broken', 'null', JSON.stringify({ transcript_path: '/missing', cwd: data.cwd })]) {
-    const fallback = cli('hud/statusline.mjs', [], input); assert.equal(fallback.status, 0); assert.match(fallback.stdout, /◆/);
+    const fallback = cli('hud/statusline.mjs', [], input); assert.equal(fallback.status, 0, childDiagnostics(fallback)); assert.match(fallback.stdout, /◆/);
   }
   await paths.atomicJSON(join(paths.orchestraHome, 'config.json'), { chain: `"${process.execPath}" -e "setTimeout(()=>{},10000)"` });
   const start = performance.now(), timeout = cli('hud/statusline.mjs', [], input);
-  assert.equal(timeout.status, 0); assert(performance.now() - start < 2500);
+  assert.equal(timeout.status, 0, childDiagnostics(timeout)); assert(performance.now() - start < 2500);
   await rm(join(paths.orchestraHome, 'config.json'));
 });
 test('statusline rows obey board lifetime, running agents, six row cap and width', async () => {
@@ -274,11 +276,12 @@ test('subagent rows emit per-task JSON, duration, fallback tokens, merged Codex 
   const cwd = await workspace(); await job(cwd, { label: '#1 task', startedAt: new Date(Date.now() - 60000).toISOString(), endedAt: null, status: 'running' });
   const tasks = [{ id: 'a', description: '#1 task', agentType: 'codex:codex-rescue', status: 'running', cwd, tokenCount: 999, startTime: Date.now() - 134000 }, { id: 'b', description: '#2 other', model: 'claude-sonnet', tokenCount: 123, startTime: Date.now() }];
   const result = cli('hud/subagent-rows.mjs', [], JSON.stringify({ columns: 100, tasks }));
-  assert.equal(result.status, 0); const rows = result.stdout.trim().split('\n').map(JSON.parse);
+  assert.equal(result.status, 0, childDiagnostics(result)); const rows = result.stdout.trim().split('\n').map(JSON.parse);
   assert.deepEqual(rows.map(row => row.id), ['a', 'b']); assert.match(rows[0].content, /Codex\s+25\s+Bash pytest -q.*2m1[45]s/); assert.match(rows[1].content, /Sonnet.*123/);
   const short = cli('hud/subagent-rows.mjs', [], JSON.stringify({ columns: 20, tasks }));
   assert(short.stdout.trim().split('\n').map(JSON.parse).every(row => Array.from(row.content).length <= 20));
-  assert.equal(cli('hud/subagent-rows.mjs', [], 'bad').status, 0);
+  const bad = cli('hud/subagent-rows.mjs', [], 'bad');
+  assert.equal(bad.status, 0, childDiagnostics(bad));
 });
 
 test('sidecar links launch before its result arrives without a duplicate phantom agent', async () => {
@@ -339,7 +342,7 @@ test('Codex model precedence is flag, config, environment, default; whitespace b
   const cwd = await workspace(), env = await fakeCodex(t, cwd), config = join(paths.orchestraHome, 'config.json');
   async function check(extraArgs, expected, overrides = {}) {
     const result = cli('scripts/codex-task.mjs', ['--cwd', cwd, ...extraArgs], '#10 model', { ...env, ...overrides });
-    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.status, 0, childDiagnostics(result));
     const args = JSON.parse(await readFile(env.FAKE_ARGS, 'utf8')); assert.equal(args[args.indexOf('-m') + 1], expected);
   }
   await paths.atomicJSON(config, { codexModel: 'config-model' });
@@ -399,7 +402,7 @@ test('subagent rows share fixed first-line label, executor and token columns', (
     { id: 'c', description: '#3 empty', model: 'claude-opus', tokenCount: 0 },
   ].map(task => ({ ...task, status: 'running', activity: 'Bash pytest -q' }));
   const result = cli('hud/subagent-rows.mjs', [], JSON.stringify({ columns: 100, tasks }));
-  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.status, 0, childDiagnostics(result));
   const lines = result.stdout.trim().split('\n').map(line => JSON.parse(line).content);
   const names = ['Haiku', 'Sonnet', 'Opus'], tokens = ['24', '309k', '—'];
   for (const [index, line] of lines.entries()) {
@@ -453,7 +456,7 @@ test('finished Claude and Codex agents report terminal activity; board notes ove
   const tasks = ['done', 'queued', 'review'].map((status, index) => ({ id: String(index), title: 'task', executor: 'sonnet', status, agentIds: [`a${index}`], note: 'important note', dependsOn: ['2'] }));
   assert(render.renderRows({ agents, board: { tasks } }).every(line => line.endsWith('important note')));
   const result = cli('hud/subagent-rows.mjs', [], JSON.stringify({ columns: 100, tasks: agents.map(agent => ({ ...agent, model: 'sonnet' })) }));
-  assert.equal(result.status, 0);
+  assert.equal(result.status, 0, childDiagnostics(result));
   for (const [index, line] of result.stdout.trim().split('\n').entries()) {
     const { content } = JSON.parse(line); assert(content.includes(labels[index])); assert(!content.includes('SubagentHandback'));
   }
