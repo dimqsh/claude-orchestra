@@ -194,6 +194,10 @@ main { max-width: 1320px; margin: 0 auto; padding: 24px max(24px, env(safe-area-
 .t { max-width: 100%; font-size: 13px; line-height: 18px; font-weight: 600; letter-spacing: -.005em; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .t .id { font-family: var(--mono); font-weight: 400; font-size: 13px; color: var(--muted); margin-right: 5px; }
 .sub { max-width: 100%; font-size: 13px; line-height: 17px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mdl { display: flex; align-items: center; gap: 6px; max-width: 100%; min-width: 0; min-height: 18px; margin: 1px 0; }
+.under .mdl { justify-content: center; }
+.mdl .kind { height: 16px; padding: 0 5px; }
+.mdl .mt { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 12px; line-height: 16px; color: var(--muted); }
 .dots { display: flex; gap: 5px; margin-top: 8px; min-height: 8px; }
 .dots:empty { display: none; }
 .dots i { width: 8px; height: 8px; border-radius: 50%; background: var(--c); }
@@ -299,7 +303,7 @@ main { max-width: 1320px; margin: 0 auto; padding: 24px max(24px, env(safe-area-
 
 /* ---------- detail popover ---------- */
 .tip {
-  position: fixed; left: 0; top: 0; z-index: 50; width: min(330px, calc(100vw - 16px));
+  position: fixed; left: 0; top: 0; z-index: 50; width: min(356px, calc(100vw - 16px));
   background: var(--surface); color: var(--ink); border: 1px solid var(--hair-2); border-radius: 10px;
   padding: 14px 16px 12px; box-shadow: var(--shadow); pointer-events: none; font-size: 13px; line-height: 18px;
   animation: tipin .12s ease-out;
@@ -317,8 +321,22 @@ main { max-width: 1320px; margin: 0 auto; padding: 24px max(24px, env(safe-area-
 .tip .tt small { font-weight: 400; color: var(--muted); font-size: 13px; }
 .tip .tb { display: grid; grid-template-columns: 1fr auto; gap: 2px 16px; margin-top: 6px; color: var(--body); }
 .tip .tb b { font-weight: 400; color: var(--ink); text-align: right; }
+.tip .att { display: grid; gap: 7px; margin: 10px 0 0; padding: 0; list-style: none; }
+.tip .ar { display: grid; grid-template-columns: 14px minmax(0, 1fr) auto 46px; gap: 8px; align-items: center; color: var(--body); }
+.tip .ar .an { color: var(--muted); text-align: right; }
+.tip .ar .am { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.tip .ar .am .mono { font-family: var(--mono); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); }
+.tip .ar .ao { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.tip .ar .ao .bdg { width: 16px; height: 16px; }
+.tip .ar .ao .bdg svg { width: 10px; height: 10px; }
+.tip .ar .ak { color: var(--ink); text-align: right; }
 .tip .at { margin: 8px 0 0; padding: 0; list-style: none; display: grid; gap: 3px; color: var(--body); }
 .tip .at li { display: flex; align-items: center; gap: 6px; }
+
+/* ---------- footer credit ---------- */
+.foot { margin-top: 8px; color: var(--muted); font-size: 13px; line-height: 20px; }
+.foot a { color: var(--body); text-decoration: underline; text-decoration-color: var(--hair-2); text-underline-offset: 3px; border-radius: 4px; }
+.foot a:hover { color: var(--ink); text-decoration-color: var(--ink); }
 
 /* ---------- responsive ---------- */
 @media (max-width: 1100px) {
@@ -401,6 +419,7 @@ main { max-width: 1320px; margin: 0 auto; padding: 24px max(24px, env(safe-area-
   <section id="others" aria-labelledby="othersH" hidden><h2 id="othersH" class="oh"></h2><div id="olist"></div></section>
   <div id="state" class="empty" hidden></div>
   <noscript><p class="pempty">The live graph needs JavaScript.</p></noscript>
+  <footer class="foot"><p>Benchmarks: <a href="https://artificialanalysis.ai/" target="_blank" rel="noopener noreferrer">Artificial Analysis</a></p></footer>
 </main>
 
 <div id="tip" class="tip" role="tooltip" hidden></div>
@@ -487,7 +506,16 @@ function sync(parent, items, keyOf, make, update) {
 }
 
 /* ================= view model ================= */
-const execKey = (x) => (EXEC_NAME[x] ? x : 'other');
+/* A task's provider can be claude, codex, gemini or kimi. claude has no colour of its own: it takes its model family.
+   Providers without a colour (gemini, kimi) fall under "other". */
+const FAMILIES = ['opus', 'sonnet', 'haiku', 'fable'];
+function execKey(x, model) {
+  if (x && x !== 'other' && EXEC_NAME[x]) return x;
+  if (!x || x === 'claude') { const m = String(model || '').toLowerCase(); return FAMILIES.find((f) => m.includes(f)) || 'other'; }
+  return 'other';
+}
+const shortModel = (m) => String(m || '').replace(/^(?:gpt|claude)-/, '').replace(/-\d{8}$/, '');
+const modelLine = (model, effort) => (model ? shortModel(model) + (effort ? '@' + effort : '') : '');
 function statusInfo(status) {
   const label = ST_LABEL[status] || status;
   const cls = status === 'completed' ? 'done' : (['queued', 'running', 'review', 'rework', 'done', 'failed', 'stopped'].includes(status) ? status : 'queued');
@@ -502,15 +530,21 @@ function parseLabel(desc) {
 }
 function agentItem(a) {
   const p = parseLabel(a.description);
-  return { key: 'a:' + a.id, kind: 'agent', id: p.id, title: p.title, parentKey: null, parentId: null, branch: null, merged: false, executor: execKey(a.executor), status: a.status, attempts: 1,
+  return { key: 'a:' + a.id, kind: 'agent', id: p.id, title: p.title, parentKey: null, parentId: null, branch: null, merged: false, executor: execKey(a.executor, a.model), status: a.status, attempts: 1,
+    type: null, modelLabel: modelLine(a.model, null), effort: null, attemptList: null,
     tokens: tokOf(a.tokens), agents: [a], model: a.model, activity: a.status === 'running' ? (a.activity || '') : '', note: '', deps: [] };
 }
 function taskItem(t, agents) {
   const run = [...agents].reverse().find((a) => a.status === 'running');
   const last = agents[agents.length - 1];
+  const agentModel = (run || last || {}).model || null;
+  const list = Array.isArray(t.attemptList) ? t.attemptList : null;
+  /* attemptCount is the current field; a numeric or array `attempts` is the older shape and still reads fine */
+  const count = Number.isFinite(t.attemptCount) ? t.attemptCount : (Array.isArray(t.attempts) ? t.attempts.length : Number(t.attempts) || 0);
   return { key: 't:' + t.id, kind: 'task', id: t.id, title: t.title, parentKey: t.parentId ? 't:' + t.parentId : null, parentId: t.parentId || null,
-    branch: t.branch || null, merged: !!t.merged, executor: execKey(t.executor), status: t.status, attempts: t.attempts || 0,
-    tokens: tokOf(t.tokens), agents, model: (run || last || {}).model || null, activity: run ? (run.activity || '') : '', note: t.note || '', deps: t.dependsOn || [] };
+    branch: t.branch || null, merged: !!t.merged, executor: execKey(t.executor, t.model || agentModel), status: t.status, attempts: count,
+    type: t.type || null, modelLabel: modelLine(t.model || agentModel, t.effort), effort: t.effort || null, attemptList: list,
+    tokens: tokOf(t.tokens), agents, model: agentModel, activity: run ? (run.activity || '') : '', note: t.note || '', deps: t.dependsOn || [] };
 }
 
 /* tasks form a tree one level deep: sub-tasks hang off their parent, not off Opus */
@@ -572,46 +606,56 @@ function buildVM(s, laneCount) {
   const execs = [...new Set(items.map((i) => i.executor))].sort((a, b) => EXEC_ORDER.indexOf(a) - EXEC_ORDER.indexOf(b));
   const t = s.totals || {};
   const orchTok = tokOf(s.orchestrator && s.orchestrator.tokens);
-  let byExec = t.byExecutor ? Object.assign({}, t.byExecutor) : null;
+  let byExec = null;
+  if (t.byExecutor) { byExec = {}; for (const [k, v] of Object.entries(t.byExecutor)) { const key = execKey(k); byExec[key] = (byExec[key] || 0) + (Number(v) || 0); } }
   if (!byExec) {                                   /* tolerate a snapshot without totals: rebuild from the parts */
     byExec = { opus: orchTok.spent };
-    for (const a of agents) { const k = execKey(a.executor); byExec[k] = (byExec[k] || 0) + tokOf(a.tokens).spent; }
+    for (const a of agents) { const k = execKey(a.executor, a.model); byExec[k] = (byExec[k] || 0) + tokOf(a.tokens).spent; }
   }
   const spent = Number.isFinite(t.spent) ? t.spent : Object.values(byExec).reduce((x, y) => x + y, 0);
   return {
     key: s.sessionId, name: (s.project && s.project.name) || 'project', cwd: (s.project && s.project.cwd) || '', branch: s.project && s.project.branch,
     updatedAt: s.updatedAt, items, shown, hidden, counts, execs, byExec, spent, orchTok,
     orchModel: s.orchestrator && s.orchestrator.model, hasBoard: !!tasks, finished: !!(s.board && s.board.finishedAt),
+    lines: shown.some((i) => i.modelLabel || i.type) ? 3 : 2,
     boardTitle: s.board && s.board.title, struct, roomy: laneCount <= 2 ? struct.R1 <= 6 : struct.R1 <= 3,
     integ: (s.board && s.board.integration) || null, kb: normKb(s.kb),
   };
 }
 
+/* Second line of a label. In the graph the model line already names the executor, so the name is dropped there;
+   in the panel a merged task shows its attempts instead of "done" (the pill and the check badge say the rest). */
 function subText(it, forGraph) {
   const ex = EXEC_NAME[it.executor];
   const st = statusInfo(it.status);
-  if (forGraph && st.cls === 'done' && it.merged) st.label = 'merged';
+  const tries = it.attempts > 1 ? it.attempts + NB + 'attempts' : '';
   let d;
   if (st.cls === 'running') d = it.activity || st.label;
   else if (st.cls === 'queued') d = it.deps.length ? 'waits on ' + it.deps.map((x) => '#' + x).join(', ') : st.label;
   else if (st.cls === 'rework') d = it.note || st.label;
-  else if (st.cls === 'done' && it.attempts > 1) d = st.label + ' · ' + it.attempts + NB + 'attempts';
+  else if (st.cls === 'done' && it.merged) d = forGraph ? ['merged', tries].filter(Boolean).join(' · ') : (tries || st.label);
+  else if (st.cls === 'done') d = [st.label, tries].filter(Boolean).join(' · ');
   else d = st.label;
-  return ex + ' · ' + d;
+  if (!forGraph && st.cls === 'done' && it.merged && tries) return tries;   /* the pill shares this line, so keep it short */
+  return forGraph && it.modelLabel ? d : ex + ' · ' + d;
 }
 
 /* ================= geometry (pure function of the view model and the box) ================= */
 const bez = (a, b, c, d, t) => { const u = 1 - t; return u * u * u * a + 3 * u * u * t * b + 3 * u * t * t * c + t * t * t * d; };
 
 const TREE = { xT: 34, yP: 34, yO: 120, y0: 198, pitch: 62 };   /* vertical tree for narrow graphs */
-const ROOMY_PITCH = 96, ROOMY_R = 24, LABEL_HANG = 69;   /* first orb top to last label bottom = (rows-1) pitches + R + HANG */
-const roomySpan = (n) => Math.max(0, n - 1) * ROOMY_PITCH + ROOMY_R + LABEL_HANG;
+/* a label is 2 lines (title, status) or 3 when a task carries a type and model@effort */
+const ROOMY_R = 24;
+const roomyPitch = (lines) => (lines === 3 ? 118 : 96);
+const compactPitch = (lines) => (lines === 3 ? 62 : 58);
+/* first orb top to last label bottom = (rows-1) pitches + R + HANG */
+const roomySpan = (n, lines) => Math.max(0, n - 1) * roomyPitch(lines) + ROOMY_R + (lines === 3 ? 89 : 69);
 /* with a sub-task column the wide layout needs more room, so it folds to the vertical tree earlier */
 const isTree = (vm, W) => W < NARROW || (vm.struct.hasKids && W < (vm.roomy ? 700 : 640));
 function graphMin(vm, W) {
   const n = vm.shown.length, R = vm.roomy ? vm.struct.R1 : vm.struct.R2;
   if (isTree(vm, W)) return n ? TREE.y0 + (n - 1) * TREE.pitch + 19 + 28 : TREE.yO + 26 + 60;
-  return Math.max(300, vm.roomy ? roomySpan(R) + 56 : R * 58 + 48);
+  return Math.max(300, vm.roomy ? roomySpan(R, vm.lines) + 56 : R * compactPitch(vm.lines) + 48);
 }
 const panelMin = (vm) => PANEL_HEAD + vm.items.length * ROW_H + Math.min(vm.items.length, GROUPS.length) * GH_H + 16;
 
@@ -630,8 +674,8 @@ function geometry(vm, W, H) {
   const curve = (sx, sy, tx, ty) => { const dx = (tx - sx) / 2; return [`M${sx} ${sy}C${sx + dx} ${sy} ${tx - dx} ${ty} ${tx} ${ty}`, bez(sx, sx + dx, tx - dx, tx, 0.58), bez(sy, sy, ty, ty, 0.58)]; };
 
   if (!tree) {
-    const rP = 22, rO = 30, rI = roomy ? ROOMY_R : 19, rC = roomy ? 20 : 16, pitch = roomy ? ROOMY_PITCH : 58;
-    const yFirst = roomy ? (H - roomySpan(R)) / 2 + rI : H / 2 - (R - 1) * pitch / 2;
+    const rP = 22, rO = 30, rI = roomy ? ROOMY_R : 19, rC = roomy ? 20 : 16, pitch = roomy ? roomyPitch(vm.lines) : compactPitch(vm.lines);
+    const yFirst = roomy ? (H - roomySpan(R, vm.lines)) / 2 + rI : H / 2 - (R - 1) * pitch / 2;
     const rowY = (r) => yFirst + r * pitch;
     const cy = R ? (rowY(0) + rowY(R - 1)) / 2 : H / 2 - 20;
     const labW = roomy ? 164 : clamp(W * (kids ? 0.16 : 0.22), kids ? 120 : 140, kids ? 180 : 210);
@@ -877,7 +921,7 @@ function updateRow(e, it, nested, cont) {
 }
 function itemAria(it) {
   const st = statusInfo(it.status);
-  return (it.id ? '#' + it.id + ' ' : '') + it.title + ', ' + EXEC_NAME[it.executor] + ', ' + st.label + (it.merged ? ', merged' : '') + (it.tokens.spent ? ', ' + fmt(it.tokens.spent) + ' tokens' : '');
+  return (it.id ? '#' + it.id + ' ' : '') + it.title + ', ' + EXEC_NAME[it.executor] + (it.modelLabel ? ' ' + it.modelLabel : '') + (it.type ? ', ' + it.type : '') + ', ' + st.label + (it.merged ? ', merged' : '') + (it.tokens.spent ? ', ' + fmt(it.tokens.spent) + ' tokens' : '');
 }
 
 /* heights are deterministic from the item count, so status changes never move the page */
@@ -936,14 +980,14 @@ function updatePill(e, d) {
 function makeNode() {
   const b = h('button', 'node'); b.type = 'button';
   b.innerHTML = '<span class="orb"><svg class="gl" aria-hidden="true"><use href="#g-other"/></svg><span class="bdg" hidden><svg aria-hidden="true"><use href="#st-queued"/></svg></span></span>' +
-    '<span class="lab"><span class="t"><span class="id"></span><span class="tt"></span></span><span class="sub"></span><span class="dots"></span></span>';
+    '<span class="lab"><span class="t"><span class="id"></span><span class="tt"></span></span><span class="mdl" hidden><span class="kind" hidden></span><span class="mt" translate="no"></span></span><span class="sub"></span><span class="dots"></span></span>';
   const t = $('.t', b);
-  b._r = { orb: $('.orb', b), gl: $('.gl', b), bdg: $('.bdg', b), id: t.children[0], tt: t.children[1], sub: $('.sub', b), dots: $('.dots', b) };
+  b._r = { orb: $('.orb', b), gl: $('.gl', b), bdg: $('.bdg', b), id: t.children[0], tt: t.children[1], mdl: $('.mdl', b), kind: $('.mdl .kind', b), mt: $('.mdl .mt', b), sub: $('.sub', b), dots: $('.dots', b) };
   return b;
 }
 function updateNode(el, d, vm, lane) {
   const r = el._r;
-  let exec, st = null, glyph, id = '', title, sub, aria, dots = [];
+  let exec, st = null, glyph, id = '', title, sub, aria, dots = [], type = '', mline = '';
   if (d.role === 'p') {
     exec = 'ink'; glyph = 'g-project'; title = vm.name; sub = vm.branch || 'no git';
     aria = 'Project ' + vm.name + (vm.branch ? ', branch ' + vm.branch : '');
@@ -956,6 +1000,7 @@ function updateNode(el, d, vm, lane) {
   } else {
     const it = d.item;
     exec = it.executor; st = statusInfo(it.status); glyph = 'g-' + it.executor; id = it.id ? '#' + it.id : ''; title = it.title; sub = subText(it, true); aria = itemAria(it);
+    type = it.type || ''; mline = it.modelLabel || '';
   }
   setCls(el, 'node ' + (d.under ? 'under' : 'side') + ' x-' + exec + (st ? ' s-' + st.cls : '') + (d.role === 'o' ? ' sq' : '') + (d.r <= 16 ? ' sm' : ''));
   setVar(el, '--w', d.w); setVar(el, '--d', 2 * d.r);
@@ -965,6 +1010,9 @@ function updateNode(el, d, vm, lane) {
   r.bdg.hidden = !st;
   if (st) { setCls(r.bdg, 'bdg s-' + st.cls); setUse(r.bdg, 'st-' + st.cls); }
   r.id.hidden = !id; txt(r.id, id); txt(r.tt, title); txt(r.sub, sub);
+  r.mdl.hidden = !(type || mline);
+  r.kind.hidden = !type; txt(r.kind, type);
+  txt(r.mt, mline); r.mt.hidden = !mline;
   sync(r.dots, dots, (k) => k, () => h('i'), (e, k) => setCls(e, 'x-' + k));
   setAttr(el, 'aria-label', aria);
   el.dataset.tip = d.role === 'i' || d.role === 'more' ? d.item.key : d.role;
@@ -1004,6 +1052,24 @@ function statusChip(cls, label) {
   return f;
 }
 
+/* one row per attempt: number, model@effort, outcome, tokens ("—" while unknown) */
+const OUTCOME = { accepted: ['done', 'accepted'], rework: ['rework', 'rework'], failed: ['failed', 'failed'] };
+function attemptTable(list) {
+  const t = h('ol', 'att');
+  t.setAttribute('aria-label', 'Attempts');
+  for (const a of list) {
+    const row = h('li', 'ar');
+    const who = h('span', 'am'), name = modelLine(a.model, a.effort) || a.provider || '—';
+    const mono = h('span', 'mono', name); mono.title = name; mono.setAttribute('translate', 'no');
+    who.append(h('i', 'xd x-' + execKey(a.provider, a.model)), mono);
+    const [cls, label] = OUTCOME[a.outcome] || ['running', 'in progress'];
+    const out = h('span', 'ao'); out.append(statusChip(cls, label));
+    row.append(h('span', 'an', String(a.n)), who, out, h('span', 'ak', Number.isFinite(a.tokens) ? fmt(a.tokens) : '—'));
+    t.appendChild(row);
+  }
+  return t;
+}
+
 function buildTip(vm, key) {
   const root = document.createDocumentFragment();
   const dl = h('dl');
@@ -1036,7 +1102,9 @@ function buildTip(vm, key) {
     const st = statusInfo(it.status);
     root.appendChild(tipHead(it.executor, (it.id ? '#' + it.id + ' ' : '') + it.title, ''));
     dlRow(dl, 'Executor', EXEC_NAME[it.executor]);
+    if (it.type) dlRow(dl, 'Type', h('span', 'kind', it.type));
     dlRow(dl, 'Model', it.model || '—', true);
+    if (it.effort) dlRow(dl, 'Effort', it.effort, true);
     dlRow(dl, 'Status', statusChip(st.cls, st.label));
     if (it.branch) { const c = h('span', 'kind mono', shortBranch(it.branch)); c.setAttribute('translate', 'no'); dlRow(dl, 'Branch', c); }
     if (it.merged) dlRow(dl, 'Merge', h('span', 'mg', 'merged'));
@@ -1053,7 +1121,8 @@ function buildTip(vm, key) {
       dlRow(dl, run ? 'Running for' : 'Took', dur(e0 - s0));
     }
     root.appendChild(dl);
-    if (it.agents.length > 1) {
+    if (it.attemptList && it.attemptList.length) root.appendChild(attemptTable(it.attemptList));
+    else if (it.agents.length > 1) {                    /* older snapshots: list the agents instead */
       const ul = h('ul', 'at');
       it.agents.forEach((a, i) => {
         const si = statusInfo(a.status), li = h('li');
@@ -1339,7 +1408,7 @@ function stress(base, sCount, aCount, opts = {}) {
     for (let k = 0; k < aCount; k++) {
       const ex = exs[(k + i) % exs.length], st = sts[(k + i * 2) % sts.length];
       const t = { id: String(k + 1), title: ['sorting bug', 'export csv/json', 'export review', 'export tests', 'docstrings', 'schema migration'][k % 6], executor: ex, status: st,
-        attempts: st === 'queued' ? 0 : 1 + (st === 'rework' ? 0 : k % 2), dependsOn: st === 'queued' ? [String(Math.max(1, k))] : [], note: '', updatedAt: base.generatedAt, tokens: { input: 0, cacheWrite: 0, cacheRead: 0, output: 0, spent: 0 }, agentIds: [] };
+        attemptCount: st === 'queued' ? 0 : 1 + (st === 'rework' ? 0 : k % 2), dependsOn: st === 'queued' ? [String(Math.max(1, k))] : [], note: '', updatedAt: base.generatedAt, tokens: { input: 0, cacheWrite: 0, cacheRead: 0, output: 0, spent: 0 }, agentIds: [] };
       if (st !== 'queued') {
         const tk = { input: rnd(800, 20000), cacheWrite: ex === 'codex' ? 0 : rnd(500, 7000), cacheRead: rnd(10000, 90000), output: rnd(300, 3000) }; tk.spent = spentOf(tk);
         const a = { id: 's' + i + 'a' + k, kind: ex === 'codex' ? 'codex' : 'claude', type: ex === 'codex' ? 'codex' : 'general-purpose', executor: ex, model: MODEL[ex],
@@ -1349,11 +1418,14 @@ function stress(base, sCount, aCount, opts = {}) {
         s.agents.unshift(a); t.tokens = tk; t.agentIds.push(a.id);
       }
       t.parentId = null; t.branch = st === 'queued' ? null : 'orchestra/stress/' + t.id; t.merged = st === 'done';
+      t.type = ['bug', 'logic', 'refactor', 'tests', 'docs', 'search'][k % 6]; t.model = ex === 'codex' ? 'gpt-6.1-sol' : ex; t.effort = ex === 'codex' ? ['high', 'medium', 'low'][k % 3] : null;
+      t.attemptList = Array.from({ length: t.attemptCount }, (_, n) => ({ n: n + 1, provider: ex, model: t.model, effort: t.effort, startedAt: base.generatedAt, endedAt: null,
+        outcome: n < t.attemptCount - 1 ? 'failed' : ({ done: 'accepted', failed: 'failed', rework: 'rework' })[st] || null, tokens: n < t.attemptCount - 1 || ['done', 'failed', 'rework'].includes(st) ? rnd(1500, 20000) : null }));
       tasks.push(t);
       if (opts.kids && k % 3 === 0 && st !== 'queued') {                 /* a Codex sub-task under every third task */
         const cs = ['running', 'review', 'done'][(k / 3 + i) % 3];
         const ck = { input: rnd(800, 9000), cacheWrite: 0, cacheRead: rnd(5000, 40000), output: rnd(200, 1500) }; ck.spent = spentOf(ck);
-        const kid = { id: t.id + '.1', title: 'sub-task ' + t.id, executor: 'codex', status: cs, attempts: 1, dependsOn: [], note: '', updatedAt: base.generatedAt, tokens: ck, agentIds: [],
+        const kid = { id: t.id + '.1', title: 'sub-task ' + t.id, executor: 'codex', model: 'gpt-6.1-sol', effort: 'medium', type: 'tests', status: cs, attemptCount: 1, attemptList: [{ n: 1, provider: 'codex', model: 'gpt-6.1-sol', effort: 'medium', startedAt: base.generatedAt, endedAt: null, outcome: cs === 'done' ? 'accepted' : null, tokens: cs === 'done' ? ck.spent : null }], dependsOn: [], note: '', updatedAt: base.generatedAt, tokens: ck, agentIds: [],
           parentId: t.id, branch: 'orchestra/stress/' + t.id + '.1', merged: cs === 'done' };
         const ka = { id: 's' + i + 'k' + k, kind: 'codex', type: 'codex', executor: 'codex', model: MODEL.codex, description: '#' + kid.id + ' ' + kid.title, taskId: kid.id,
           status: cs === 'running' ? 'running' : 'completed', startedAt: new Date(Date.parse(base.generatedAt) - 20000).toISOString(), endedAt: cs === 'running' ? null : base.generatedAt, activity: POOL.codex[0], tokens: ck };
@@ -1407,13 +1479,21 @@ async function startMock() {
   render(snap);
 
   const spawn = (s, t) => {
-    const ex = execKey(t.executor);
+    const ex = execKey(t.executor, t.model);
     s.agents.unshift({ id: 'mock-' + (counter++), kind: ex === 'codex' ? 'codex' : 'claude', type: ex === 'codex' ? 'codex' : 'general-purpose', executor: ex, model: MODEL[ex],
       description: '#' + t.id + ' ' + t.title, taskId: t.id, status: 'running', startedAt: new Date().toISOString(), endedAt: null, activity: (POOL[ex] || POOL.sonnet)[0],
       tokens: zeroTok() });
-    t.attempts = (t.attempts || 0) + 1;
+    t.attemptCount = (t.attemptCount || 0) + 1;
+    (t.attemptList = t.attemptList || []).push({ n: t.attemptCount, provider: t.executor, model: t.model || MODEL[ex] || null, effort: t.effort || null, startedAt: new Date().toISOString(), endedAt: null, outcome: null, tokens: null });
     t.merged = false;
     if (!t.branch && s.board.integration) t.branch = s.board.integration.branch.replace(/\/main$/, '') + '/' + t.id;
+  };
+  /* close the open attempt record: outcome and the tokens the attempt spent */
+  const closeAttempt = (s, t, outcome) => {
+    const open = (t.attemptList || []).findLast((x) => x.outcome === null);
+    if (!open) return;
+    const ag = s.agents.find((x) => x.taskId === t.id);
+    open.outcome = outcome; open.endedAt = new Date().toISOString(); open.tokens = ag ? ag.tokens.spent : 0;
   };
   const finish = (s, t) => { for (const a of s.agents) if (a.taskId === t.id && a.status === 'running') { a.status = 'completed'; a.endedAt = new Date().toISOString(); } };
 
@@ -1422,9 +1502,12 @@ async function startMock() {
       const T = s.board.tasks, done = (id) => (T.find((x) => x.id === id) || { status: 'done' }).status === 'done';
       const opts = [];
       for (const t of T) {
-        if (t.status === 'review') opts.push(() => { t.status = Math.random() < 0.2 ? 'rework' : 'done'; if (t.status === 'rework') t.note = 'needs changes'; else t.merged = true; finish(s, t); });
-        else if (t.status === 'running') opts.push(() => { finish(s, t); t.status = t.executor === 'opus' ? 'done' : (Math.random() < 0.5 ? 'review' : 'done'); if (t.status === 'done') t.merged = true; });
-        else if (t.status === 'rework') opts.push(() => { t.status = 'running'; spawn(s, t); });
+        if (t.status === 'review') opts.push(() => { t.status = Math.random() < 0.2 ? 'rework' : 'done'; if (t.status === 'rework') t.note = 'needs changes'; else t.merged = true; closeAttempt(s, t, t.status === 'rework' ? 'rework' : 'accepted'); finish(s, t); });
+        else if (t.status === 'running') opts.push(() => { finish(s, t); t.status = t.executor === 'opus' ? 'done' : (Math.random() < 0.5 ? 'review' : 'done'); if (t.status === 'done') { t.merged = true; closeAttempt(s, t, 'accepted'); } });
+        else if (t.status === 'rework') opts.push(() => {
+          if (t.executor === 'sonnet' && Math.random() < 0.6) { t.executor = 'opus'; t.model = 'opus'; t.effort = 'high'; }   /* escalate to a stronger model */
+          t.status = 'running'; spawn(s, t);
+        });
         else if (t.status === 'queued' && (t.dependsOn || []).every(done)) opts.push(() => { t.status = 'running'; spawn(s, t); });
       }
       if (opts.length) { opts[rnd(0, opts.length - 1)](); s._idle = 0; }
