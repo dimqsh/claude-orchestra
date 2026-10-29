@@ -23,10 +23,12 @@ In Claude Code:
 
 ```
 /plugin marketplace add Yeachan-Heo/oh-my-claudecode
-/plugin marketplace add ~/PycharmProjects/claude-orchestra
+/plugin marketplace add dimqsh/claude-orchestra
 /plugin install orchestra@claude-orchestra
 /orchestra:setup
 ```
+
+To work on the plugin itself, add your local clone instead: `/plugin marketplace add /path/to/claude-orchestra`.
 
 `/orchestra:setup` checks Node, the plugin, the Codex CLI version and login. It then shows the
 planned changes to `~/.claude/settings.json` (`install-hud.mjs install --dry-run`) and, after you
