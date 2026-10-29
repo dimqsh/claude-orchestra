@@ -2,7 +2,7 @@
 
 # claude-orchestra
 
-*Opus plans and reviews. Codex and Sonnet write the code. You watch it happen.*
+*Opus plans and reviews. The cheapest model that can do each job writes the code. You watch it happen.*
 
 [![Claude Code plugin](https://img.shields.io/badge/Claude_Code-plugin-D97757?style=flat-square)](https://code.claude.com/docs/en/plugins)
 ![Node.js](https://img.shields.io/badge/Node.js->=20-3c873a?style=flat-square)
@@ -10,7 +10,7 @@
 [![Requires oh-my-claudecode](https://img.shields.io/badge/requires-oh--my--claudecode-7C6CF2?style=flat-square)](https://github.com/Yeachan-Heo/oh-my-claudecode)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue?style=flat-square)](LICENSE)
 
-[Features](#features) • [Getting started](#getting-started) • [Usage](#usage) • [How it works](#how-it-works) • [Troubleshooting](#troubleshooting)
+[Features](#features) • [Getting started](#getting-started) • [Usage](#usage) • [Models and routing](#models-and-routing) • [How it works](#how-it-works) • [Troubleshooting](#troubleshooting)
 
 </div>
 
@@ -21,18 +21,19 @@
   </picture>
 </p>
 
-A Claude Code plugin for big tasks on a limited Opus budget. Opus splits the task, gives the hard
-parts to Codex (`gpt-6.1-sol`) and the routine parts to Sonnet, then reviews every result before
-it reaches your code. Each subtask runs in its own git worktree, and a shared project memory stops
-agents from reading the same files twice.
+A Claude Code plugin for big tasks on a limited Opus budget. Opus splits the task, gives each
+subtask to the cheapest model that scores well enough for its type (bug, logic, refactor, tests,
+docs, search), then reviews every result before it reaches your code. Opus never edits code
+itself. Each subtask runs in its own git worktree, and a shared project memory stops agents from
+reading the same files twice.
 
 ## Features
 
-- **Work split by difficulty.** Bugs, refactors and cross-module logic go to Codex. Docs, formatting and tests that follow an existing pattern go to Sonnet. Independent subtasks run in parallel.
-- **Opus reviews everything.** It reads each diff, runs the tests itself and sends work back with a numbered fix list. After two failed attempts it escalates: Sonnet to Codex, Codex to Opus.
+- **Models picked per subtask.** The plugin finds the models you can use (Haiku and Sonnet as Claude agents, the GPT models your Codex CLI lists) and scores each one per task type from public benchmarks, its own six-task benchmark and your board history. Opus reads a short ranking, starts every subtask on the cheapest model within 85% of the best score and writes a one-line reason for each choice into the plan. Independent subtasks run in parallel.
+- **Opus reviews everything and edits nothing.** It reads each diff, checks that the hand touched only the files it was given, runs the tests itself and sends work back with a numbered fix list. After two failed attempts the subtask climbs to a stronger model; the last step is the strongest model at its top effort. The final review is always Opus 5.5.
 - **One worktree per subtask.** Agents never share a checkout. Accepted work is merged into an integration branch and lands in your working tree as staged changes. Nothing is committed for you.
 - **Shared memory.** Agents search project notes before reading code and save what they learn. A note is marked stale when the files it describes change.
-- **Live board.** The status line shows every task with its executor, tokens and current command. The web graph shows the same data for all your active sessions.
+- **Live board.** The status line shows every task with its model, effort, tokens and current command. The web graph shows the same data for all your active sessions. Every attempt is its own record, so a task that climbed to a stronger model keeps the failed attempts of the cheaper one.
 - **No npm dependencies.** Node built-ins only, including `node:sqlite` for the memory.
 
 ## Getting started
@@ -45,6 +46,7 @@ agents from reading the same files twice.
 | [Node.js](https://nodejs.org) | 20+, 22.13+ for the memory | runs the scripts |
 | [Codex CLI](https://github.com/openai/codex) | 0.165.0+, logged in with `codex login` | runs Codex tasks |
 | git | any | one worktree per subtask |
+| [Artificial Analysis](https://artificialanalysis.ai) API key | optional, free | public coding scores and prices; without it only BenchLM scores load |
 
 ### Install
 
@@ -60,6 +62,8 @@ In Claude Code:
 Installing `orchestra` also installs `oh-my-claudecode`. `/orchestra:setup` checks Node and the
 Codex CLI, shows the planned change to `~/.claude/settings.json` and installs the status line once
 you confirm. Your current status line keeps working: its output comes first, the board below it.
+Setup then finds your models, asks for the optional Artificial Analysis key, shows what the own
+benchmark would cost and runs it only for the models you pick (none is fine).
 
 > [!TIP]
 > To hack on the plugin, add your local clone instead of the GitHub one:
@@ -78,12 +82,11 @@ What happens next:
 ```mermaid
 flowchart LR
     task([Your task]) --> opus[Opus splits it]
-    opus -->|hard| codex[Codex]
-    opus -->|routine| sonnet[Sonnet]
-    sonnet -.->|"hard part #2.1"| sub[Codex sub-agent]
-    codex --> review[Opus reviews]
-    sonnet --> review
-    review -->|fix list| codex
+    catalog[(model ranking)] -.-> opus
+    opus -->|"cheapest model that scores well"| hand[Claude or Codex hand]
+    hand -.->|"hard part #2.1"| sub[Codex sub-agent]
+    hand --> review[Opus 5.5 reviews]
+    review -->|"fix list, stronger model after two misses"| hand
     review -->|accept| main[(integration branch)]
     main -->|land| tree[Your working tree, staged]
 ```
@@ -93,14 +96,14 @@ While it runs, the status line looks like this:
 ```
 ◆ acme-shop  ⎇ feat/export  ·  Opus 18.2k · Codex 41.7k · Sonnet 14.0k  ·  Σ 73.9k · memory 12 · ≈9k saved
   tasks  ✓ 1 done   ◐ 2 running   ○ 1 queued
-├─ ◐ #1 sort bug              Codex    24.1k   editing cli.py
-├─ ✓ #2 export csv/json       Codex    17.6k   done · 2 attempts
-├─ ◐ #4 export tests          Sonnet    9.8k   Bash pytest tests/
-╰─ ○ #5 docstrings            Sonnet       —   waits on #2
+├─ ◐ #1 sort bug              6.1-sol@medium  24.1k   editing cli.py
+├─ ✓ #2 export csv/json       6.1-sol@high    17.6k   done · 2 attempts
+├─ ◐ #4 export tests          sonnet           9.8k   Bash pytest tests/
+╰─ ○ #5 docstrings            haiku               —   waits on #2
 ```
 
-Opus ends with a report: what was done, which commands it ran to check it, what went into memory
-and what is left. The changes sit in your working tree, staged. Review them and commit.
+Opus ends with a report: what was done, which commands it ran to check it, which model took which
+subtask, what went into memory and what is left. The changes sit in your working tree, staged. Review them and commit.
 
 ### Commands
 
@@ -108,11 +111,75 @@ and what is left. The changes sit in your working tree, staged. Review them and 
 |---|---|
 | `/orchestra:orchestrate <task>` | Runs the whole flow above. Manual only, Claude never starts it by itself. |
 | `/orchestra:board` | Opens the web graph at `http://127.0.0.1:7377/` and prints the board in chat. |
-| `/orchestra:setup` | Checks requirements and installs or updates the status line. |
+| `/orchestra:setup` | Checks requirements, installs or updates the status line, finds your models and offers the own benchmark. |
 
 > [!NOTE]
 > Tokens on the board exclude cache reads. For Claude they are input, cache writes and output; for
 > Codex, uncached input plus output. "Saved" is an estimate of the file reading the memory spared.
+
+## Models and routing
+
+Opus does not guess which model fits a subtask. `scripts/models.mjs` keeps a catalog of the
+models you can use in `~/.claude/orchestra/models.json` and prints a ranking at the start of every
+run.
+
+| Command | What it does |
+|---|---|
+| `models.mjs discover [--force]` | Lists the models you can use and sends one tiny request per new model to check access. Cached for 24 hours. |
+| `models.mjs benchmarks [--force]` | Loads public scores and prices. Weekly, or when discovery finds a new model. |
+| `models.mjs brief [--types a,b]` | Prints the ranking Opus reads: up to three rungs per task type, at most 20 lines. |
+| `models.mjs bench --estimate` | Lists the models the own benchmark can run and its token cap. |
+| `models.mjs bench --models a,b` | Runs the own benchmark for the models you name. |
+| `models.mjs bench --skip a,b` | Marks models as not picked; they never run automatically. |
+| `models.mjs bench --new` | Benchmarks models nobody has run yet, in the background. Needs `benchAuto: true`. |
+
+An example of what `brief` prints (made-up numbers):
+
+```
+bug 1. claude:sonnet · 73 · own 2/2 · AA 59 (2026-10-28) · $$
+bug 2. codex:gpt-5.6-terra@high · 79 · AA 79 (2026-10-28) · $$
+bug 3. codex:gpt-6.1-sol@high · 83 · history 6 tasks, 83% first try · $$$
+```
+
+**Score.** Each model gets a score from 0 to 100 per task type. The prior is one public metric
+per type, the one most candidates have (ties go to the Artificial Analysis coding index, then
+SWE-bench, Terminal-Bench, LiveCodeBench). A model without it gets the median of the others, or
+50 if there is none. The own benchmark and your board history pool into n tasks. With 5 or more
+tasks of that type, the history's first-try rate is the score. Below that, the score is
+`(1 - w) * prior + w * pass rate` with `w = n / (n + 4)`.
+
+**Cost class.** `$` to `$$$$`, from the Artificial Analysis price blended 3:1 input to output.
+Without a price the class is the provider's default: Claude `$$`, Codex `$$$`, Gemini `$`, Kimi
+`$$`. Without an Artificial Analysis key no model has a price, so every class is the provider's.
+
+**Ladder.** Rung 1 is the cheapest candidate that scores at least 85% of the best, skipping
+providers marked `low limit` (above 90% of any limit window). Rung 2 is the next candidate that
+scores at least 5 points higher, or is one cost class up and scores higher. Rung 3 is the best
+score. Rung 1 runs at medium effort, rungs 2 and 3 at high (the nearest the model supports). Opus
+starts at rung 1 unless the subtask is risky. When a subtask fails, it climbs the rungs, and the
+last step re-runs rung 3 at its top effort.
+
+**Own benchmark.** Six tiny fixture repositories (bug, logic, refactor, tests, docs and a
+multi-file change that counts as a second refactor sample) each have a hidden check script.
+`search` has no fixture and relies on public data and history. A run is capped at 150k tokens
+per model, checked between tasks, with a 10-minute timeout per task; a model that goes over is
+flagged `overCap`. One run at a time (`bench.lock`). Claude models run through
+`claude -p --model <alias> --output-format json --permission-mode acceptEdits --allowedTools "Read Edit Write Glob Grep Bash(node:*)"`,
+Codex models through `codex-task.mjs`. `--new` runs only with `benchAuto: true`, waits while a
+board is active (not finished and updated in the last 30 minutes) or the provider is above 70% of
+a window, and never runs models you skipped. After each orchestration run, Opus starts
+`bench --new` in the background; it does nothing without `benchAuto` or new models.
+
+**Providers.** Claude: `haiku` and `sonnet` through the `Agent` tool; `fable` only with
+`allowFable: true`; `opus` is the brain and reviewer, never a hand. Codex: every model
+`codex debug models` lists. Gemini is discovered, but its runner is deferred: the Gemini CLI
+rejects some account types (`IneligibleTierError`, asks to migrate to Antigravity), so it is listed
+unavailable with that error. Kimi is listed `disabled: no sandbox` and never gets a task. No local
+models run.
+
+Public scores and prices come from [Artificial Analysis](https://artificialanalysis.ai), which
+needs a free API key. The BenchLM tables in the `leoncuhk/awesome-llm-bench` mirror fill the gaps
+and need no key. Every public score in the catalog carries its source and date.
 
 ## Shared memory
 
@@ -149,17 +216,20 @@ they never reach your code.
 ## Sub-agents
 
 Claude Code agents cannot start other agents, so nesting goes one level deep and only to Codex.
-A Sonnet agent hands a hard part to Codex as task `#2.1` with `codex-task.mjs --detach`, then
-calls `codex-task.mjs wait <job>` until it finishes (exit code 3 means "still running"). This
-keeps each call inside the 10-minute Bash limit. Opus reviews sub-tasks like any other task.
+A Claude hand gets a sub-agent only when Opus allows it in the brief, and the brief names the
+sub-agent's model and effort; a hand never picks a model. The hand starts Codex as task `#2.1`
+with `codex-task.mjs --model <m> --effort <e> --detach`, then calls `codex-task.mjs wait <job>`
+until it finishes (exit code 3 means "still running"). This keeps each call inside the 10-minute
+Bash limit. Opus reviews sub-tasks like any other task.
 
 ## How it works
 
-- The task board is a JSON file in `~/.claude/orchestra/boards/`, written by `scripts/board.mjs`.
-- Agents are tied to tasks by a `#<id>` label: in the agent description for Sonnet, on the first prompt line for Codex.
-- Tokens and activity come from the Claude Code transcripts in `~/.claude/projects` and from the Codex job files in `~/.claude/orchestra/codex-jobs`. The plugin only reads the transcripts.
-- Codex runs through `codex exec --json`. The runner reads its events for the current command and tails the rollout file for live token counts.
-- The status line scripts are copied to `~/.claude/orchestra`, so they keep working when the plugin cache moves. A session-start hook keeps the copy current.
+- The task board is a JSON file in `~/.claude/orchestra/boards/`, written by `scripts/board.mjs`. `board add <id> "<title>" --exec <provider> --model <model> --effort <effort> --type <type>` stores the choice. Each attempt is its own record (provider, model, effort, tokens, outcome: accepted, rework or failed), and the first-try rate per model and type feeds the scores.
+- Agents are tied to tasks by a `#<id>` label: in the agent description for Claude hands, on the first prompt line for Codex.
+- Tokens and activity come from the Claude Code transcripts in `~/.claude/projects` and from the job files in `~/.claude/orchestra/jobs`, which carry a `provider` field. Older Codex jobs in `~/.claude/orchestra/codex-jobs` are still read. The plugin only reads the transcripts.
+- Codex runs through `codex exec --json`, with `--model` and `--effort` from the plan. The runner reads its events for the current command and tails the rollout file for live token counts.
+- Limits: the status line writes Claude's 5-hour and weekly windows to `~/.claude/orchestra/limits.json` once a minute. Codex's come from the newest rollout file. Gemini and Kimi are unknown.
+- The status line scripts are copied to `~/.claude/orchestra` together with `lib/` and `data/` (the model alias table and provider cost classes), so they keep working when the plugin cache moves. A session-start hook keeps the copy current.
 - The web server binds to `127.0.0.1` only and pushes updates over SSE. Open `?mock=1` for a demo without real sessions.
 - Module boundaries and data formats are specified in [`docs/CONTRACT.md`](docs/CONTRACT.md).
 
@@ -167,10 +237,25 @@ keeps each call inside the 10-minute Bash limit. Opus reviews sub-tasks like any
 
 | Setting | Where | Default |
 |---|---|---|
-| Codex model | `codexModel` in `~/.claude/orchestra/config.json` | `gpt-6.1-sol` |
+| Codex fallback model | `codexModel` in `~/.claude/orchestra/config.json`; used only when a run passes no `--model` | `gpt-6.1-sol` |
+| Fable as a hand | `allowFable` in `config.json`. Fable costs more, so it stays off until you set `true` | `false` |
+| Artificial Analysis key | `artificialAnalysisKey` in `config.json`, or the `ORCHESTRA_AA_KEY` env var (the env var wins) | none |
+| Benchmark new models automatically | `benchAuto` in `config.json`; `/orchestra:setup` sets it to `true` | `false` |
 | Graph port | `server.mjs --port` | `7377` |
 | Active session window | `server.mjs --since <minutes>` | `30` |
 | Plugin data folder | `ORCHESTRA_HOME` env var | `~/.claude/orchestra` |
+
+A `config.json` that turns Fable on and keeps the automatic benchmark:
+
+```json
+{ "allowFable": true, "benchAuto": true }
+```
+
+Kimi stays off until it offers a sandbox: its headless `--print` mode approves every command on
+the whole machine, so discovery lists it as `disabled: no sandbox` and it never gets a task.
+
+Files in `~/.claude/orchestra`: `models.json` (the catalog), `limits.json`, `jobs/`, `boards/`,
+`kb/`, `bench.lock` and `config.json`.
 
 ## Troubleshooting
 
@@ -202,13 +287,30 @@ works on Node 20.
 Run `/orchestra:setup`. Per-agent rows need Claude Code 2.1.293 or newer (`claude --version`).
 </details>
 
+<details>
+<summary>A model is missing from the ranking</summary>
+
+Run `node "<plugin>/scripts/models.mjs" discover --force` and read the `unavailable:` line;
+the catalog entry in `~/.claude/orchestra/models.json` holds the error. Fable needs
+`allowFable: true`. Gemini and Kimi never get tasks (see Configuration and Models and routing).
+Codex models appear only when `codex debug models` lists them.
+</details>
+
+<details>
+<summary>The benchmark does not start</summary>
+
+`bench already running` means another run holds `~/.claude/orchestra/bench.lock`. `bench --new`
+needs `benchAuto: true` and waits while a board is active or the provider is above 70% of a limit
+window. `bench --models <model>` forces a run for one model.
+</details>
+
 ## Uninstall
 
 1. Restore your previous status line: `node "<plugin>/scripts/install-hud.mjs" uninstall`.
 2. In each project that still has agent branches: `node "<plugin>/scripts/worktree.mjs" cleanup`.
 3. Stop the graph: `node "<plugin>/web/server.mjs" --stop`.
 4. Remove the plugin and unused dependencies: `/plugin uninstall orchestra@claude-orchestra`, then `claude plugin prune`.
-5. Delete `~/.claude/orchestra` if you don't need the boards and memory.
+5. Delete `~/.claude/orchestra` if you don't need the boards, memory and model catalog. It also holds your Artificial Analysis key if you stored one in `config.json`.
 
 `<plugin>` is `~/.claude/plugins/cache/claude-orchestra/orchestra/<version>`, or `plugins/orchestra`
 in a local clone.
