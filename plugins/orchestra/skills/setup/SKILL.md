@@ -69,16 +69,16 @@ The orchestrate skill picks a model per subtask from a catalog. This step builds
    node "${CLAUDE_PLUGIN_ROOT}/scripts/models.mjs" bench --estimate
    ```
    One line per available Claude and Codex model. Each run is six small tasks capped at 150000 tokens per model (the cap is checked between tasks, so one task can overshoot it). Show the list and ask which models to benchmark now. None is fine.
-5. Run the picked models, one at a time. It takes minutes, so start it with `run_in_background: true` and wait for the notification:
-   ```
-   node "${CLAUDE_PLUGIN_ROOT}/scripts/models.mjs" bench --models <picked>
-   ```
-   `<picked>` is a comma-separated list; use `provider:model` when a bare name is ambiguous. Then mark the rest of the estimate list so they never run by themselves:
-   ```
-   node "${CLAUDE_PLUGIN_ROOT}/scripts/models.mjs" bench --skip <the rest>
-   ```
-   On a repeat run, leave out models that already have a result in `models.json` (`own`): `--skip` overwrites it. Report each `<model>: done|partial|skipped` line.
-6. Unless the user wants no benchmarking at all, set `"benchAuto": true` in config.json the same way as the key. Tell them what it does: models that appear later get benchmarked once, in the background. That waits while a board is active (not finished and updated in the last 30 minutes) or the provider is above 70% of a limit window, and it never runs the models they skipped. `"benchAuto": false` stops it.
+5. Start the benchmark in ONE call, so the skip list cannot be lost. `<picked>` and `<the rest>` are comma-separated lists from the estimate; use `provider:model` when a bare name is ambiguous. `<the rest>` is every other model on the estimate list, minus those that already have a result in `models.json` (`own`), because `--skip` overwrites a result.
+   - Some picked and some left: one call with `run_in_background: true` (it takes minutes and runs one model at a time). The skip list is written first, then the picked models run:
+     ```
+     node "${CLAUDE_PLUGIN_ROOT}/scripts/models.mjs" bench --models <picked> --skip <the rest>
+     ```
+   - All picked, or nothing left to skip: leave out `--skip`.
+   - None picked: run `bench --skip <all>` alone, in the foreground. It returns at once and starts no run.
+
+   Never pass an empty list: `--models` or `--skip` with no names is an error, so leave that flag out. Do not start a second `bench` while one runs: it prints `bench already running` and does nothing. When the background call ends, report each `<model>: done|partial|skipped` line.
+6. Unless the user wants no benchmarking at all, set `"benchAuto": true` in config.json the same way as the key, after the call from step 5 has ended. Tell them what it does: after a run, the orchestrate skill starts `bench --new` in the background; it benchmarks models that appeared since and never the ones they skipped. A run is postponed while a board is active (not finished and updated in the last 30 minutes) or the provider is above 70% of a limit window: the run stops, and the next `bench --new` picks up where it left off. `"benchAuto": false` stops it.
 7. Show the ranking:
    ```
    node "${CLAUDE_PLUGIN_ROOT}/scripts/models.mjs" brief

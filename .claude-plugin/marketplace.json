@@ -4,7 +4,7 @@
     "name": "dimash"
   },
   "metadata": {
-    "description": "Agent orchestration for Claude Code with Opus, Codex and Sonnet and a live board"
+    "description": "Agent orchestration for Claude Code: Opus plans and reviews, the cheapest suitable model writes the code, live board"
   },
   "allowCrossMarketplaceDependenciesOn": [
     "omc"
@@ -13,7 +13,7 @@
     {
       "name": "orchestra",
       "source": "./plugins/orchestra",
-      "description": "Opus plans and reviews, Codex takes hard subtasks, Sonnet takes easy ones. Live board in the status line, web graph, shared project memory, one git worktree per subtask.",
+      "description": "Opus plans and reviews, and each subtask goes to the cheapest model that scores well enough for its type. Live board in the status line, web graph, shared project memory, one git worktree per subtask.",
       "version": "0.2.0"
     }
   ]

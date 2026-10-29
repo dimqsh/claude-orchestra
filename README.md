@@ -17,7 +17,7 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/images/graph-dark.png">
-    <img src="docs/images/graph-light.png" alt="The web graph: a project node, Opus in the middle, and Codex and Sonnet tasks branching off it with the tokens each one spent" width="900">
+    <img src="docs/images/graph-light.png" alt="The web graph: a project node, Opus in the middle, and one task per subtask branching off it, each handed to the cheapest model that fits and showing the tokens it spent" width="900">
   </picture>
 </p>
 
@@ -29,7 +29,7 @@ reading the same files twice.
 
 ## Features
 
-- **Models picked per subtask.** The plugin finds the models you can use (Haiku and Sonnet as Claude agents, the GPT models your Codex CLI lists) and scores each one per task type from public benchmarks, its own six-task benchmark and your board history. Opus reads a short ranking, starts every subtask on the cheapest model within 85% of the best score and writes a one-line reason for each choice into the plan. Independent subtasks run in parallel.
+- **Models picked per subtask.** The plugin finds the models you can use (Haiku and Sonnet as Claude agents, the GPT models your Codex CLI lists) and scores each one per task type from public benchmarks, its own six-task benchmark and your board history. Opus reads a short ranking, starts every subtask on the cheapest model within 85% of the best score (risky subtasks start higher) and writes a one-line reason for each choice into the plan. Independent subtasks run in parallel.
 - **Opus reviews everything and edits nothing.** It reads each diff, checks that the hand touched only the files it was given, runs the tests itself and sends work back with a numbered fix list. After two failed attempts the subtask climbs to a stronger model; the last step is the strongest model at its top effort. The final review is always Opus 5.5.
 - **One worktree per subtask.** Agents never share a checkout. Accepted work is merged into an integration branch and lands in your working tree as staged changes. Nothing is committed for you.
 - **Shared memory.** Agents search project notes before reading code and save what they learn. A note is marked stale when the files it describes change.
@@ -131,7 +131,7 @@ run.
 | `models.mjs bench --estimate` | Lists the models the own benchmark can run and its token cap. |
 | `models.mjs bench --models a,b` | Runs the own benchmark for the models you name. |
 | `models.mjs bench --skip a,b` | Marks models as not picked; they never run automatically. |
-| `models.mjs bench --new` | Benchmarks models nobody has run yet, in the background. Needs `benchAuto: true`. |
+| `models.mjs bench --new` | Benchmarks models nobody has run yet. The orchestrate skill starts it in the background after a run; it does nothing without `benchAuto: true`. |
 
 An example of what `brief` prints (made-up numbers):
 
@@ -145,7 +145,7 @@ bug 3. codex:gpt-6.1-sol@high · 83 · history 6 tasks, 83% first try · $$$
 per type, the one most candidates have (ties go to the Artificial Analysis coding index, then
 SWE-bench, Terminal-Bench, LiveCodeBench). A model without it gets the median of the others, or
 50 if there is none. The own benchmark and your board history pool into n tasks. With 5 or more
-tasks of that type, the history's first-try rate is the score. Below that, the score is
+history tasks of that type, the history's first-try rate is the score. Below that, the score is
 `(1 - w) * prior + w * pass rate` with `w = n / (n + 4)`.
 
 **Cost class.** `$` to `$$$$`, from the Artificial Analysis price blended 3:1 input to output.
@@ -154,21 +154,22 @@ Without a price the class is the provider's default: Claude `$$`, Codex `$$$`, G
 
 **Ladder.** Rung 1 is the cheapest candidate that scores at least 85% of the best, skipping
 providers marked `low limit` (above 90% of any limit window). Rung 2 is the next candidate that
-scores at least 5 points higher, or is one cost class up and scores higher. Rung 3 is the best
-score. Rung 1 runs at medium effort, rungs 2 and 3 at high (the nearest the model supports). Opus
-starts at rung 1 unless the subtask is risky. When a subtask fails, it climbs the rungs, and the
-last step re-runs rung 3 at its top effort.
+scores at least 5 points higher, or sits in a higher cost class and scores higher. Rung 3 is the
+best score. Rung 1 runs at medium effort, rungs 2 and 3 at high (the nearest the model supports).
+Opus starts a subtask at rung 1; a risky one starts higher. When a subtask fails, it climbs the
+rungs, and the last step re-runs rung 3 at its top effort.
 
 **Own benchmark.** Six tiny fixture repositories (bug, logic, refactor, tests, docs and a
 multi-file change that counts as a second refactor sample) each have a hidden check script.
 `search` has no fixture and relies on public data and history. A run is capped at 150k tokens
 per model, checked between tasks, with a 10-minute timeout per task; a model that goes over is
-flagged `overCap`. One run at a time (`bench.lock`). Claude models run through
-`claude -p --model <alias> --output-format json --permission-mode acceptEdits --allowedTools "Read Edit Write Glob Grep Bash(node:*)"`,
-Codex models through `codex-task.mjs`. `--new` runs only with `benchAuto: true`, waits while a
-board is active (not finished and updated in the last 30 minutes) or the provider is above 70% of
-a window, and never runs models you skipped. After each orchestration run, Opus starts
-`bench --new` in the background; it does nothing without `benchAuto` or new models.
+flagged `overCap`. One run at a time (`bench.lock`). Claude models run through `claude -p`, Codex
+models through `codex-task.mjs` (the exact flags are in [`docs/CONTRACT.md`](docs/CONTRACT.md)).
+`bench --new` runs only with `benchAuto: true` and never runs models you skipped. It is
+postponed while a board is active (not finished and updated in the last 30 minutes) or the
+provider is above 70% of a limit window: the run stops, and the next `bench --new` picks up where
+it left off. The orchestrate skill starts it in the background after each run, so it never starts
+by itself; it does nothing without `benchAuto` or new models.
 
 **Providers.** Claude: `haiku` and `sonnet` through the `Agent` tool; `fable` only with
 `allowFable: true`; `opus` is the brain and reviewer, never a hand. Codex: every model
@@ -300,8 +301,9 @@ Codex models appear only when `codex debug models` lists them.
 <summary>The benchmark does not start</summary>
 
 `bench already running` means another run holds `~/.claude/orchestra/bench.lock`. `bench --new`
-needs `benchAuto: true` and waits while a board is active or the provider is above 70% of a limit
-window. `bench --models <model>` forces a run for one model.
+needs `benchAuto: true`. It stops while a board is active or the provider is above 70% of a limit
+window, and the next `bench --new` picks up where it left off. `bench --models <model>` forces a
+run for one model.
 </details>
 
 ## Uninstall

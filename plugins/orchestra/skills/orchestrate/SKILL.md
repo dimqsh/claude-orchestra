@@ -17,19 +17,19 @@ User's task: $ARGUMENTS
 
 Talk to the user in the language they write in. Briefs to agents can be in English.
 
-Flow: you → hands (Claude agents and Codex jobs) → their sub-agents if the brief allows them
+Flow: you → hands (Claude agents and Codex jobs) → their sub-agents if the agent brief allows them
 (Codex only, one level) → you as the reviewer. Every subtask lives in its own worktree and
 branch. Accepted work is merged into an integration branch, and at the end it reaches the user's
 working tree in one step.
 
 Who may be a hand: Haiku and Sonnet through `Agent`, GPT models through Codex. Fable only when
 `allowFable` is `true` in `~/.claude/orchestra/config.json`. Opus never. Gemini and Kimi get no
-task: Gemini has no runner yet and Kimi has no sandbox. `brief` should not list them; if a
-Gemini or Kimi line shows up, skip it.
+task: Gemini has no runner yet and Kimi has no sandbox. Routing never ranks Kimi, and it does
+not rank Gemini until its runner exists.
 
 Three habits keep the board, the graph and the token savings working:
 - record every status change of a subtask with `board`;
-- label every agent `#<id> <short title>`: in `description` for Claude hands, as the first line of the brief for Codex;
+- label every agent `#<id> <short title>`: in `description` for Claude hands, as the first line of the agent brief for Codex;
 - before reading or searching code, check the shared memory (`kb search`), and require the same from agents.
 
 Plugin commands. Write the full command in every call. Never put a command or a path in a shell
@@ -58,8 +58,8 @@ Give every subtask one type. The catalog scores models per type.
 
 ## Routing
 
-`models.mjs brief` prints, for each task type, up to three rungs, cheapest first. Example with
-made-up numbers:
+`models.mjs brief` prints the ranking: for each task type, up to three rungs, cheapest first.
+Example with made-up numbers:
 ```
 bug 1. claude:sonnet · 73 · own 2/2 · AA 59 (2026-10-28) · $$
 bug 2. codex:gpt-5.6-terra@high · 79 · AA 79 (2026-10-28) · $$
@@ -71,16 +71,17 @@ cost class. Claude models have no effort, so none is printed. `low limit` marks 
 90% of one of its limit windows.
 
 - **Rung 1:** the cheapest candidate that scores at least 85% of the best, skipping providers marked `low limit`. Effort medium.
-- **Rung 2:** the next candidate that scores at least 5 points higher, or is one cost class up and scores higher. Effort high.
+- **Rung 2:** the next candidate that scores at least 5 points higher than rung 1, or sits in a higher cost class and scores higher. Effort high.
 - **Rung 3:** the best score. Effort high.
 
-Effort is the nearest one the model supports. Use what `brief` prints.
+Effort is the nearest one the model supports. Use the effort the ranking prints.
 
 Reading the evidence: `AA 59 (2026-10-28)` is a public score with its source and date; `own 2/2`
 is the plugin's own benchmark; `history 6 tasks, 83% first try` comes from past boards and, from
 5 tasks of that type, is the score itself. `no public data · neutral prior 50` means the model has
-no public score and starts from the median of the others. Cost class `$` to `$$$$` follows the
-Artificial Analysis price; without a price it is the provider's default.
+no value on this type's primary metric, so it starts from the median of the other candidates.
+Cost class `$` to `$$$$` follows the Artificial Analysis price; without a price it is the
+provider's default.
 
 Start every subtask at rung 1. Start higher only when a mistake would be hard to spot (subtle
 logic, data, security, concurrency); say so in the plan. A mistake that tests or a quick look will
@@ -92,14 +93,14 @@ catch belongs on rung 1. Write the rung and the reason into the plan table in st
 |---|---|
 | **Claude hand** (`haiku`, `sonnet`, `fable` when allowed) | `Agent` with `subagent_type: "oh-my-claudecode:executor"`, `model: "<alias>"`, `description: "#<id> <short title>"` |
 | **Claude hand, read-only** (type `search`, or a heavy test suite to summarize) | `Agent` with `subagent_type: "oh-my-claudecode:explore"` or `"oh-my-claudecode:verifier"` and `model: "<alias>"` |
-| **Codex hand** (any GPT model `brief` lists) | `Bash` with `run_in_background: true`, command below |
+| **Codex hand** (any GPT model in the ranking) | `Bash` with `run_in_background: true`, command below |
 
-Running Codex. The brief goes on stdin and its first line must be `#<id> ...`. `--cwd` points
+Running Codex. The agent brief goes on stdin and its first line must be `#<id> ...`. `--cwd` points
 at the subtask's worktree:
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-task.mjs" --cwd "<worktree path>" --model <model> --effort <effort> --write <<'BRIEF'
 #2 export csv/json
-<brief, template below>
+<agent brief, template below>
 BRIEF
 ```
 - Always run it in the background (`run_in_background: true`): Codex takes longer than a foreground Bash call may run. You get a notification when it ends; the output holds Codex's final answer and a line `[codex] #<id> done|failed · <tokens> · <time> · to memory: N`.
@@ -114,7 +115,7 @@ BRIEF
 
 - Check the session model. Your system prompt names it. The final review is always Opus 5.5. On Opus 5.5 you review yourself. On any other model, tell the user in one line that the final review and every accepted/rework verdict go to a read-only `Agent` with `model: "opus"` (step 3).
 - Memory first: `kb context` and `kb search "<main words of the task>"`. Don't rediscover what is already there.
-- Models: `node "${CLAUDE_PLUGIN_ROOT}/scripts/models.mjs" discover && node "${CLAUDE_PLUGIN_ROOT}/scripts/models.mjs" benchmarks && node "${CLAUDE_PLUGIN_ROOT}/scripts/models.mjs" brief`. Discovery skips itself within 24 hours, and the public data refresh runs weekly or when discovery finds a new model, so this is cheap. Read the `brief` once and keep it in mind for the split. If it fails or lists no model, run `models.mjs discover --force` once; if that does not help, stop and tell the user to run `/orchestra:setup`.
+- Models: `node "${CLAUDE_PLUGIN_ROOT}/scripts/models.mjs" discover && node "${CLAUDE_PLUGIN_ROOT}/scripts/models.mjs" benchmarks && node "${CLAUDE_PLUGIN_ROOT}/scripts/models.mjs" brief`. Discovery skips itself within 24 hours, and the public data refresh runs weekly or when discovery finds a new model, so this is cheap. Read the ranking once and keep it in mind for the split. If `brief` fails or lists no model, run `models.mjs discover --force` once; if that does not help, stop and tell the user to run `/orchestra:setup`.
 - `git status`. Without a git repository there are no worktrees: suggest `git init` to the user, or work in one folder as before and make sure parallel subtasks touch different files.
 - Find how the project builds and runs tests, if memory doesn't say. You need the command, not the file contents.
 - If memory has no `context` note for this project, write one with what you just learned (layout, test command, conventions, 5-10 lines). Otherwise every agent would work it out again:
@@ -129,24 +130,25 @@ A good subtask has a clear done criterion and its own set of files. Each one run
 worktree, so parallel agents never overwrite each other. Two subtasks that change the same
 lines still conflict at merge time: combine them or order them (`--deps`).
 
-Pick the hand for each subtask from the `brief` of its type, and show the plan as a table. The
-last column names the evidence from `brief`; a row that names a model without a reason is not done.
+Pick the hand for each subtask from the ranking for its type, and show the plan as a table. The
+last column names the evidence from the ranking; a row that names a model without a reason is not
+done. The example uses the `bug` lines from the Routing section above:
 
 ```text
-| # | task            | type  | executor | model@effort       | why (evidence)                                           |
-|---|-----------------|-------|----------|--------------------|----------------------------------------------------------|
-| 1 | sorting bug     | bug   | codex    | gpt-6.1-sol@medium | rung 1: cheapest within 85% of best, own 2/2, AA 74      |
-| 2 | export csv/json | logic | claude   | sonnet             | rung 1: history 7 tasks, 86% first try, $$               |
-| 3 | docstrings      | docs  | claude   | haiku              | rung 1: cheapest within 85% of best for docs, $          |
+| # | task             | type | executor | model@effort     | why (evidence)                                                      |
+|---|------------------|------|----------|------------------|---------------------------------------------------------------------|
+| 1 | sort_tasks crash | bug  | claude   | sonnet           | rung 1: 73, within 85% of the best 83; own 2/2, AA 59 (2026-10-28)  |
+| 2 | queue lock race  | bug  | codex    | gpt-6.1-sol@high | rung 3: risky (concurrency); history 6 tasks, 83% first try         |
+| 3 | docstrings       | docs | claude   | haiku            | rung 1: cheapest within 85% of the best for docs, $                 |
 ```
 
 In one Bash call:
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/scripts/worktree.mjs" init && \
 node "${CLAUDE_PLUGIN_ROOT}/scripts/board.mjs" init "<task title>" && \
-node "${CLAUDE_PLUGIN_ROOT}/scripts/board.mjs" add 1 "sorting bug" --exec codex --model gpt-6.1-sol --effort medium --type bug && \
-node "${CLAUDE_PLUGIN_ROOT}/scripts/board.mjs" add 2 "export csv/json" --exec claude --model sonnet --type logic --deps 1 && \
-node "${CLAUDE_PLUGIN_ROOT}/scripts/board.mjs" add 3 "docstrings" --exec claude --model haiku --type docs --deps 2 && \
+node "${CLAUDE_PLUGIN_ROOT}/scripts/board.mjs" add 1 "sort_tasks crash" --exec claude --model sonnet --type bug && \
+node "${CLAUDE_PLUGIN_ROOT}/scripts/board.mjs" add 2 "queue lock race" --exec codex --model gpt-6.1-sol --effort high --type bug && \
+node "${CLAUDE_PLUGIN_ROOT}/scripts/board.mjs" add 3 "docstrings" --exec claude --model haiku --type docs --deps 1,2 && \
 node "${CLAUDE_PLUGIN_ROOT}/scripts/board.mjs" show
 ```
 `--exec` is the provider (`codex` or `claude`), `--model` the model or Claude alias, `--effort`
@@ -203,17 +205,18 @@ runner adds the memory.
 
 #### Writing for the model
 
-You write the brief; these notes say only what each family needs.
-- **Codex (GPT):** the brief arrives on stdin and the runner adds the memory. Give the goal, the files and one done command, and describe the result rather than a step list: at `high` the model plans its own steps. Keep the first line `#<id> ...`.
-- **Claude:** the agent knows only the brief, so include the worktree path and the memory block. Haiku needs exact file paths, concrete steps and one done command, with no judgment calls left open. Sonnet and Fable do well with the goal, the constraints and the done criterion.
-- **Gemini:** no task goes to it yet. When a runner exists, brief it like Haiku: exact paths and one done command, with `#<id>` on the first line of stdin.
+You write the agent brief; these notes say only what each family needs.
+- **Codex (GPT):** the agent brief arrives on stdin and the runner adds the memory. Give the goal, the files and one done command, and describe the result rather than a step list: at `high` the model plans its own steps. Keep the first line `#<id> ...`.
+- **Claude:** the agent knows only its brief, so include the worktree path and the memory block. Haiku needs exact file paths, concrete steps and one done command, with no judgment calls left open. Sonnet and Fable do well with the goal, the constraints and the done criterion.
+- **Gemini:** no task goes to it yet. When a runner exists, write its agent brief like Haiku's: exact paths and one done command, with `#<id>` on the first line of stdin.
 
 #### Sub-agents (one level)
 
-Allow a sub-agent only when the brief says so and names its model and effort. Take them from
-the `brief` for the type of the hard part. A hand never picks a model itself. A sub-agent is
+Allow a sub-agent only when the agent brief says so and names its model and effort. Use the
+cheapest Codex line of `models.mjs brief` for the type of the hard part, with the effort printed
+there; with no Codex line, allow no sub-agent. A hand never picks a model itself. A sub-agent is
 always Codex: Claude Code agents have no tool for launching agents. Add this to a Claude hand's
-brief, with `<model>`, `<effort>` and `<type>` filled in:
+agent brief, with `<model>`, `<effort>` and `<type>` filled in:
 ```
 If you hit a hard part (<what counts>), hand it to Codex as #<id>.1, with exactly this model and effort:
 1. node "<plugin>/scripts/board.mjs" add <id>.1 "<short>" --exec codex --model <model> --effort <effort> --type <type>
@@ -221,7 +224,7 @@ If you hit a hard part (<what counts>), hand it to Codex as #<id>.1, with exactl
 3. node "<plugin>/scripts/board.mjs" set <id>.1 running
 4. node "<plugin>/scripts/codex-task.mjs" --cwd "P" --model <model> --effort <effort> --write --detach <<'BRIEF'  → job id J
    #<id>.1 <short>
-   <brief for Codex in the same shape>
+   <agent brief for Codex in the same shape>
    BRIEF
 5. node "<plugin>/scripts/codex-task.mjs" wait J --timeout 540   (exit code 3 = still running, call it again)
 6. check the diff (node "<plugin>/scripts/worktree.mjs" diff <id>.1) and the tests in P, then
@@ -231,11 +234,12 @@ At most one or two such sub-agents, and a sub-agent starts none of its own. Use 
 
 ### 3. Review every result and accept it
 
-The final review is always Opus 5.5. When your session runs on another model, send the review to
-a read-only `Agent` with `subagent_type: "oh-my-claudecode:code-reviewer"` and `model: "opus"`.
-Give it the worktree path, the allowed files and the "Done when" criteria; it runs the diff and
-the tests itself and answers `accepted` or `rework` with a numbered fix list. You run the
-`worktree` and `board` commands for its verdict.
+The final review is always Opus 5.5. On Opus 5.5 you run the checklist below yourself. On any
+other model, send it to a read-only `Agent` with `subagent_type: "oh-my-claudecode:code-reviewer"`
+and `model: "opus"`. Paste the full checklist into its prompt, scope check first, with the
+worktree path, the allowed files and the "Done when" criteria. It runs the diff and the tests
+itself and answers `accepted` or `rework` with a numbered fix list. You run the `worktree` and
+`board` commands for its verdict.
 
 When a hand comes back: `board set <id> review`. A hand's report is a claim, not a fact.
 For each subtask, scope first:
@@ -266,17 +270,20 @@ new attempt record.
 - **Codex hand:** if this subtask had one Codex job, add `--resume-last` and send only the fix list (first line still `#<id> ...`, same `--cwd`, same `--model` and `--effort`). Otherwise start fresh: say briefly what is already done and in which files, then the fix list.
 
 A rung gets two attempts: the first and one rework. If the second attempt fails, climb to the
-next rung of the `brief` for this type, in this order:
-1. rung 2, then rung 3 (the best score), as `brief` printed them;
-2. then rung 3 once more at the model's top supported effort (for Codex, `xhigh`);
+next rung of the ranking for this type, in this order:
+1. rung 2, then rung 3 (the best score), as `models.mjs brief` printed them;
+2. then rung 3 once more at its top effort: the last value of that entry's `efforts` array in
+   `~/.claude/orchestra/models.json`. A Claude rung 3 has no efforts, so for it this step is a
+   plain re-run;
 3. if that fails too, `board set <id> failed --note "<why>"`.
 
 To climb: `board set <id> rework --note "<…>"` first (it closes the attempt), then
-`board exec <id> <provider> --model <model> --effort <effort>`, then `board set <id> running`.
-Always pass `--model` and `--effort` to `exec`; without them the board clears both. The new hand
-has no context: say what is already done and in which files, what failed, and the fix list. The
-board keeps the failed attempts of the cheaper model, so the history shows which model did the
-work. Opus is never a hand, so `exec` never takes `opus`.
+`board exec <id> <provider> --model <model>`, then `board set <id> running`. Add
+`--effort <effort>` to `exec` for Codex hands only; Claude hands have none. Without `--model`
+(and `--effort` for Codex) the board clears the field. The new hand has no context: say what is
+already done and in which files, what failed, and the fix list. The board keeps the failed
+attempts of the cheaper model, so the history shows which model did the work. Opus is never a
+hand, so `exec` never takes `opus`.
 
 If a subtask can't be done, say so plainly in the report.
 

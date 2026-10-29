@@ -588,7 +588,7 @@ mutator that returns a promise is rejected, so probes, fetches and model runs ha
 - Claude: `hud/statusline.mjs` hands the `rate_limits` of its stdin to `recordClaudeLimits`, which writes `limitsPath()` = `<orchestraHome>/limits.json` as `{ "claude": <raw rate_limits>, "recordedAt": "ISO" }` at most once a minute. Windows: `five_hour` → `5h`, `seven_day` → `7d`; the percentage comes from `used_percentage`, `used_percent` or `utilization`, the reset time from `resets_at` (epoch seconds or ISO).
 - Codex: the last `token_count` event with `rate_limits` in the newest `<codexHome>/sessions/YYYY/MM/DD/rollout-*.jsonl`. `primary` and `secondary` are named by `window_minutes`: 300 → `5h`, 10080 → `week`.
 - `readLimits()` returns `{ claude, codex, gemini: null, kimi: null }`. Each value is `null` (unknown, never read as zero use) or `[{ name, usedPercent, resetsAt }]`. A window whose `resetsAt` has passed counts as 0%. `maxUsedPercent(limits, provider)` is the highest percentage or `null`.
-- Thresholds: above 90% the provider is `low limit` in routing (section 20); above 70% an automatic benchmark waits (section 19).
+- Thresholds: above 90% the provider is `low limit` in routing (section 20); above 70% an automatic benchmark is postponed (section 19).
 
 **Configuration** (`orchestraConfig()`, `<orchestraHome>/config.json`):
 
@@ -635,7 +635,7 @@ discovery reads files and sends at most one tiny request per model.
 - A Codex model that passed its probe is not probed again until its listing changes. A failed probe, and every Gemini probe, repeats after 24 hours. `--force` does not re-probe a reusable result.
 - A Codex model that disappears from the list becomes unavailable with `not listed by codex debug models`. When `codex debug models` itself fails, every known Codex entry becomes unavailable with the error text.
 - With `allowFable` off, an existing `claude:fable` entry becomes unavailable with `disabled: allowFable is false`.
-- **Gemini has no runner.** `gemini-task.mjs` is deferred: the Gemini CLI rejects this account type (`IneligibleTierError`, it asks to migrate to Antigravity), so a runner cannot be verified. Gemini stays in the catalog with the probe's error. No task goes to a Gemini entry while no runner exists.
+- **Gemini has no runner.** `gemini-task.mjs` is deferred: the Gemini CLI rejects this account type (`IneligibleTierError`, it asks to migrate to Antigravity), so a runner cannot be verified. Gemini stays in the catalog with the probe's error. Routing does not rank Gemini until a runner exists, so no task goes to it.
 - **Kimi gets no task.** Its headless `--print` mode approves every command on the whole machine. It becomes a hand only when it offers a sandbox and gets a runner.
 - Not used: opencode (same OpenAI account as Codex), llama.cpp and any local model, DeepSeek.
 
@@ -680,9 +680,10 @@ the order bug, logic, refactor, tests, docs, multi. One run at a time: `<orchest
 is created exclusively with `{ pid, startedAt }`; a lock whose process is gone is taken over;
 otherwise `bench already running (pid N)` is printed and the exit code is 0.
 
-**Result.** `own` = `{ date, partial, overCap, byType, completed }`. `partial` is `false` or
-`{ reason }` with `token cap`, `board active`, `low limit` or `runner error: <message>`. Partial
-results are kept.
+**Result.** `own` = `{ date, partial, overCap, byType, completed, runnerTokens? }`. `partial` is
+`false` or `{ reason }` with `token cap`, `board active`, `low limit` or `runner error:
+<message>`. Partial results are kept. `runnerTokens` appears only when runs that ended in a runner
+error spent tokens; they count toward the cap but belong to no fixture.
 
 ```
 models.mjs bench --estimate         one line per available Claude and Codex model: "<id>: 150000 tokens per model (budget estimate)"
@@ -697,18 +698,24 @@ models.mjs bench --new              automatic run, see below
 **Automatic runs.** `bench --new` does nothing unless `benchAuto` is `true`. It runs only entries
 whose `own` is `null` or a partial result that stopped for `board active`, `low limit` or a
 runner error (it resumes at the fixtures not yet completed), and never an entry the user skipped.
-Before every fixture it checks two conditions and stops with that reason when one holds:
+Before every fixture it checks two conditions. When one holds the run is postponed: it stops with
+that reason in `partial.reason`, and the next `bench --new` picks up where it left off.
 - `board active`: a board file in `boards/` is not finished and was updated in the last 30 minutes;
 - `low limit`: the provider is above 70% of any limit window.
 
-The orchestrate skill starts `bench --new` in the background as the last command of a run, after
-`board finish`. While a board is active it waits, so it does not compete with an orchestration.
+Nothing starts `bench --new` by itself: the orchestrate skill starts it in the background as the
+last command of a run, after `board finish`. While a board is active the run is postponed, so it
+does not compete with an orchestration.
 
 **Setup.** `/orchestra:setup` runs `discover --force`; asks for the optional Artificial Analysis
 key and stores it as `artificialAnalysisKey`; runs `benchmarks --force`; shows `bench --estimate`;
-lets the user pick models (none is fine); runs `bench --models <picked>` and `bench --skip <the
-rest>`; then sets `benchAuto: true`. The first benchmark therefore runs only with consent and
-after the estimate.
+lets the user pick models (none is fine). It then starts ONE call, in the background, so that a
+second `bench` never meets `bench.lock` and loses the skip list: `bench --models <picked> --skip
+<the rest>`. The skip list is written before the first run. `--models` is left out when nothing
+was picked and `--skip` when everything was; an empty list is an error. When nothing was picked,
+`bench --skip <all>` runs alone in the foreground. `<the rest>` leaves out models that already
+have a result, because `--skip` overwrites it. After that call ends, setup sets `benchAuto:
+true`. The first benchmark therefore runs only with consent and after the estimate.
 
 ## 20. Routing (`lib/route.mjs`, `models.mjs brief`, board attempts)
 
@@ -718,8 +725,8 @@ changing behavior, multi-file moves), `tests` (tests that follow an existing pat
 (README, comments, text), `search` (find where something lives, explain code; read-only). Every
 subtask has exactly one.
 
-**Candidates.** Catalog entries with `available.ok`, except Kimi, any Opus entry and Fable
-unless `allowFable` is `true`.
+**Candidates.** Catalog entries with `available.ok`, except Kimi, Gemini until it has a runner,
+any Opus entry and Fable unless `allowFable` is `true`.
 
 **Score** (0 to 100, per model and task type):
 1. *Prior.* One public metric per ladder: the one that most candidates have among `codingIndex` (Artificial Analysis), `swebench`, `terminalbench`, `livecodebench`; ties go in that order. A model without it gets the median of the other candidates' values, or 50 if none has one.
@@ -741,10 +748,10 @@ a price, so the class is always the provider's.
 price per class when there is none), then higher score, then id. A provider above 90% of any limit
 window is `low limit`: still listed, skipped for rung 1.
 - Rung 1: the cheapest candidate that scores at least 85% of the best score and is not `low limit`.
-- Rung 2: the next candidate that scores at least 5 points higher than rung 1, or is one cost class up and scores higher.
+- Rung 2: the next candidate that scores at least 5 points higher than rung 1, or sits in a higher cost class (any higher class) and scores higher.
 - Rung 3: the best-scoring candidate. A rung is left out when no candidate fits it or when the model is already on an earlier rung.
-- Effort: rung 1 medium, rungs 2 and 3 high, each the nearest level the model supports. Claude models have no effort.
-- Opus starts a subtask at rung 1 unless it is risky. Escalation climbs the rungs. The last step re-runs rung 3 at its top supported effort.
+- Effort: rung 1 medium, rungs 2 and 3 high, each the nearest level the model supports. When rung 1 is also the best candidate, it runs at `high`. Claude models have no effort.
+- Opus starts a subtask at rung 1 unless it is risky. Escalation climbs the rungs. The last step re-runs rung 3 at its top supported effort: the last value of that entry's `efforts` array in `models.json`. A Claude entry has no efforts, so for it the last step is a plain re-run.
 
 **Brief.** `models.mjs brief [--types a,b]` prints at most 20 lines: for each type up to three
 rungs, then one limits line.
@@ -757,7 +764,7 @@ Limits: claude 41% used/5h, 12% used/7d · codex 8% used/5h, 3% used/week · gem
 Line shape: `<type> <rung>. <provider>:<model>[@<effort>] · <score> · <evidence> · <cost>[ · low limit]`.
 Evidence parts: `own <passed>/<total>`, `history <n> tasks, <p>% first try`, and the public metric
 as `<source> [<metric> ]<value> (<date>)` with `AA` for Artificial Analysis and `BenchLM`
-for BenchLM, or `no public data · neutral prior <n>`. A type without candidates prints
+for BenchLM, or `no public data · neutral prior <n>`, which means the model has no value on the ladder's primary metric and takes the median of the other candidates. A type without candidates prints
 `<type> no available models`. The numbers above are made up.
 
 **Board.** Each task stores its choice and one record per attempt:
@@ -778,9 +785,9 @@ for BenchLM, or `no public data · neutral prior <n>`. A type without candidates
 **Orchestrator rules** (`skills/orchestrate/SKILL.md` follows these):
 - Opus never writes or edits code. It writes briefs and verdicts. A small fix goes to the cheapest suitable hand.
 - Hands: Claude models (`haiku`, `sonnet`, `fable` with `allowFable`) as `Agent` with `model` set to the alias; GPT models through `codex-task.mjs --model --effort`. Opus is never a hand. Gemini and Kimi get no task.
-- Step 0: check the session model. The final review is always Opus 5.5. When the session is not Opus 5.5, the skill says that the final review and every accept or rework verdict go to a read-only `Agent` with `model: "opus"`. Then `models.mjs discover`, `benchmarks` and `brief`, each of which skips itself when nothing is due.
+- Step 0: check the session model. The final review is always Opus 5.5. When the session is not Opus 5.5, the skill says that the final review and every accept or rework verdict go to a read-only `Agent` with `model: "opus"`, which gets the full review checklist, scope check first. Then `models.mjs discover` and `benchmarks`, each of which skips itself when nothing is due, and `brief`.
 - The plan is a table with the columns `# · task · type · executor · model@effort · why (evidence)`. Every row cites the evidence from `brief`.
-- Every brief lists the files that may change and a checkable done criterion. A hand that finds a problem outside its scope reports it. The review checks scope first and treats extra changes as rework.
-- Sub-agents only when the brief allows them and names the sub-agent's model and effort. A hand never picks a model. A sub-agent is always Codex, one level deep.
-- Escalation: a rung gets two attempts, the first and one rework. Then the next rung; after rung 3, rung 3 once more at its top supported effort; then `failed`.
+- Every agent brief lists the files that may change and a checkable done criterion. A hand that finds a problem outside its scope reports it. The review checks scope first and treats extra changes as rework.
+- Sub-agents only when the agent brief allows them and names the sub-agent's model and effort: the cheapest Codex line of `models.mjs brief` for the type of the hard part. With no Codex line, no sub-agent. A hand never picks a model. A sub-agent is always Codex, one level deep.
+- Escalation: a rung gets two attempts, the first and one rework. Then the next rung; after rung 3, rung 3 once more at its top supported effort (the last value of the entry's `efforts` array; a plain re-run for a Claude entry); then `failed`. `board exec` takes `--effort` for Codex hands only.
 - Last command of a run, after `board finish`: `models.mjs bench --new` in the background. It does nothing without `benchAuto` or new models.
