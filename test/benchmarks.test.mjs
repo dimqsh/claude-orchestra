@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const benchmarksUrl = new URL('../plugins/orchestra/lib/benchmarks.mjs', import.meta.url).href;
@@ -12,6 +12,7 @@ const cliUrl = new URL('../plugins/orchestra/scripts/models.mjs', import.meta.ur
 const aaUrl = 'https://artificialanalysis.ai/api/v2/data/llms/models';
 const benchUrl = 'https://raw.githubusercontent.com/leoncuhk/awesome-llm-bench/main/README.md';
 const aa = JSON.parse(readFileSync(new URL('fixtures/aa-models.json', import.meta.url), 'utf8'));
+const aaFractions = JSON.parse(readFileSync(new URL('fixtures/aa-models-fractions.json', import.meta.url), 'utf8'));
 const markdown = readFileSync(new URL('fixtures/benchlm/README.md', import.meta.url), 'utf8');
 const liveMarkdown = readFileSync(new URL('fixtures/benchlm/README-2026-10-29.md', import.meta.url), 'utf8');
 const oldDate = '2026-01-01';
@@ -27,8 +28,12 @@ function setup(t, seed = { models: models() }) {
   const root = mkdtempSync(join(tmpdir(), 'orchestra-benchmarks-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const store = join(root, 'orchestra'); mkdirSync(store);
+  const bin = join(root, 'bin'); mkdirSync(bin);
+  copyFileSync(new URL('fixtures/bin/codex-models', import.meta.url), join(bin, 'codex'));
+  chmodSync(join(bin, 'codex'), 0o755);
   writeFileSync(join(store, 'models.json'), JSON.stringify({ version: 1, ...seed }));
-  const env = { ...process.env, HOME: root, ORCHESTRA_HOME: store, CLAUDE_CONFIG_DIR: join(root, 'claude'), CODEX_HOME: join(root, 'codex'), ORCHESTRA_AA_KEY: '' };
+  const env = { ...process.env, HOME: root, ORCHESTRA_HOME: store, CLAUDE_CONFIG_DIR: join(root, 'claude'), CODEX_HOME: join(root, 'codex'), ORCHESTRA_AA_KEY: '',
+    PATH: `${bin}:${dirname(process.execPath)}` };
   function child(body, { aaData = aa, benchText = markdown, aaStatus = 200, benchStatus = 200, network = '', cli = false, args = [], expectedKey = null } = {}) {
     const code = `
       import { existsSync } from 'node:fs';
@@ -175,6 +180,44 @@ test('AA data fills codingIndex, livecodebench, price and speed with source and 
   assert.equal(calls.filter(x => x.url === aaUrl).length, 1);
   assert.deepEqual(calls.find(x => x.url === aaUrl).headers, { 'x-api-key': 'test-key' });
   assert.ok(Number.isFinite(Date.parse(catalog.benchmarksAt)));
+});
+
+test('AA evaluation fractions become percentages while codingIndex stays as given', t => {
+  const f = setup(t);
+  for (const [value, expected] of [[0.717, 71.7], [0, 0], [1, 100], [78, 78]]) {
+    const row = { ...aaFractions.data[0], evaluations: { ...aaFractions.data[0].evaluations, livecodebench: value } };
+    const out = f.run('const result = await b.refreshBenchmarks({ force: true, fetch: fakeFetch, key: "test-key" });', { aaData: { data: [row] } });
+    const pub = out.catalog.models['codex:gpt-6.1-sol'].public;
+    assert.equal(pub.livecodebench, expected);
+    assert.equal(pub.codingIndex, 0.95);
+    assert.deepEqual(pub.price, { input: 1.25, output: 10, unit: 'USD per 1M tokens' });
+  }
+});
+
+test('AA strips trailing qualifiers and keeps the highest codingIndex per id in either order', t => {
+  for (const data of [aaFractions.data, [...aaFractions.data].reverse()]) {
+    const seeded = models(); seeded['codex:gpt-5'] = entry('codex', 'gpt-5');
+    const f = setup(t, { models: seeded });
+    const out = f.run('', { aaData: { data } });
+    const pub = out.catalog.models['codex:gpt-5'].public;
+    assert.equal(pub.codingIndex, 75);
+    assert.equal(pub.livecodebench, 80);
+    assert.deepEqual(pub.price, { input: 2, output: 8, unit: 'USD per 1M tokens' });
+    assert.equal(out.catalog.models['codex:gpt-6.1-sol'].public.codingIndex, 0.95, 'GPT-6 Sol must not match GPT-6.1 Sol');
+  }
+});
+
+test('AA falls back to exact slug matching when the name does not match', t => {
+  const f = setup(t);
+  const out = f.run('', { aaData: aaFractions });
+  const pub = out.catalog.models['claude:sonnet'].public;
+  assert.equal(pub.source, 'artificialanalysis.ai');
+  assert.equal(pub.codingIndex, 60);
+  assert.equal(pub.livecodebench, 100);
+  const mismatch = f.run('const result = await b.refreshBenchmarks({ force: true, fetch: fakeFetch, key: "test-key" });', {
+    aaData: { data: [aaFractions.data.at(-1)] },
+  });
+  assert.deepEqual(mismatch.result.matched, [], 'neither look-alike name nor slug may match GPT-6.1 Sol');
 });
 
 test('no key → BenchLM only, warning "no Artificial Analysis key"', t => {

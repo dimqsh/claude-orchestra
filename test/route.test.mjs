@@ -71,7 +71,7 @@ test('rung 1 is the cheapest candidate at or above 85% of the best', t => {
 
 test('rung 2 is at least 5 points higher or one cost class up', t => {
   const f = fixture(t);
-  for (const [value, price] of [[90, 0.8], [86, 2], [80, 2]]) {
+  for (const [value, price] of [[90, 0.8], [86, 2], [85, 2], [80, 2]]) {
     const input = catalog(entry('claude', 'cheap', 85, 0.5), entry('codex', 'near', 89, 0.6),
       entry('codex', 'step', value, price), entry('codex', 'best', 100, 20));
     const rows = f.run(`r.ladder('bug', ${JSON.stringify(input)}, {}, {})`);
@@ -83,7 +83,7 @@ test('rung 2 is at least 5 points higher or one cost class up', t => {
       assert.equal(rows[1].id, 'codex:step');
     }
     assert.ok(rows[1].score.value >= rows[0].score.value + 5 ||
-      (rows[1].cost.length > rows[0].cost.length && rows[1].score.value > rows[0].score.value));
+      (rows[1].cost.length > rows[0].cost.length && rows[1].score.value >= rows[0].score.value));
   }
 });
 
@@ -138,7 +138,7 @@ test('own per-type pass rate adjusts the public prior and evidence names the sou
   assert.match(fallback.evidence, /BenchLM SWE-bench 81/);
 });
 
-test('cost classes use 3:1 blended prices and provider defaults without changing aliases', t => {
+test('cost classes use 3:1 blended prices and model then provider defaults without changing aliases', t => {
   const f = fixture(t);
   for (const [price, expected] of [[0, '$'], [1, '$'], [1.01, '$$'], [5, '$$'], [5.01, '$$$'], [15, '$$$'], [15.01, '$$$$']]) {
     assert.equal(f.run(`r.costClass(${JSON.stringify(entry('codex', 'a', 80, price))})`), expected);
@@ -153,6 +153,40 @@ test('cost classes use 3:1 blended prices and provider defaults without changing
     assert.equal(f.run(`r.costClass(${JSON.stringify(a)})`), aliases.providerCostClasses[provider]);
     assert.match(aliases.providerCostClasses[provider], /^\${1,4}$/);
   }
+  assert.deepEqual(aliases.modelCostClasses, { 'claude:haiku': '$', 'claude:sonnet': '$$', 'claude:fable': '$$$' });
+  for (const [model, expected] of [['haiku', '$'], ['sonnet', '$$'], ['fable', '$$$']]) {
+    const modelEntry = entry('claude', model, null, null, { public: null });
+    assert.equal(f.run(`r.costClass(${JSON.stringify(modelEntry)})`), expected);
+    modelEntry.public = { price: { input: 20, output: 20 } };
+    assert.equal(f.run(`r.costClass(${JSON.stringify(modelEntry)})`), '$$$$', 'an actual price overrides defaults');
+  }
+  assert.equal(f.run(`r.costClass({ provider: 'unknown' })`), '$$');
+});
+
+test('tied own 1/1 results without public data give three rungs cheapest first', t => {
+  const input = catalog(...[['claude', 'haiku'], ['claude', 'sonnet'], ['codex', 'gpt-6.1-sol']]
+    .map(([provider, model]) => entry(provider, model, null, null, { public: null,
+      own: { byType: { bug: { passed: 1, total: 1 } } } })));
+  const f = fixture(t, input);
+  const rows = f.run(`r.ladder('bug', ${JSON.stringify(input)}, {}, {})`);
+  assert.deepEqual(rows.map(row => [row.rung, row.id, row.cost, row.score.value]), [
+    [1, 'claude:haiku', '$', 60], [2, 'claude:sonnet', '$$', 60], [3, 'codex:gpt-6.1-sol', '$$$', 60],
+  ]);
+  const out = f.brief(['--types', 'bug']);
+  assert.equal(out.status, 0, out.stderr); assert.equal(out.stderr, '');
+  assert.match(out.stdout, /^bug 3\. codex:gpt-6\.1-sol@high · 60 · own 1\/1/m);
+  assert.doesNotMatch(out.stdout, /^untested:/m);
+});
+
+test('best breaks score ties by higher cost class, then higher prior, then id', t => {
+  const f = fixture(t);
+  const cheap = entry('codex', 'cheap', 80, 0.5);
+  const a = entry('codex', 'a', 60, 2, { own: { byType: { bug: { passed: 0, total: 2 } } } });
+  const b = entry('codex', 'b', 80, 2, { own: { byType: { bug: { passed: 0, total: 4 } } } });
+  cheap.own = { byType: { bug: { passed: 0, total: 4 } } };
+  const c = { ...b, id: 'codex:c', model: 'c' };
+  const rows = f.run(`r.ladder('bug', ${JSON.stringify(catalog(c, a, b, cheap))}, {}, {})`);
+  assert.deepEqual(rows.map(row => [row.rung, row.id, row.score.value]), [[1, cheap.id, 40], [2, a.id, 40], [3, b.id, 40]]);
 });
 
 test('fable never appears unless allowFable; opus and unavailable models never appear', t => {
@@ -245,10 +279,11 @@ test('brief reads real board history and remains read-only with an empty or unav
 
 test('rung 2 cannot downgrade when a safe rung 1 ties the low-limit best', t => {
   const f = fixture(t);
-  const input = catalog(entry('codex', 'limited', 90, 0.1), entry('claude', 'safe', 90, 0.5),
+  const input = catalog(entry('codex', 'limited', 90, 10), entry('claude', 'safe', 90, 0.5),
     entry('codex', 'downgrade', 85, 2));
   const rows = f.run(`r.ladder('bug', ${JSON.stringify(input)}, { codex: [{ usedPercent: 95 }] }, {})`);
-  assert.deepEqual(rows.map(row => [row.rung, row.id]), [[1, 'claude:safe'], [3, 'codex:limited']]);
+  assert.deepEqual(rows.map(row => [row.rung, row.id]), [[1, 'claude:safe'], [2, 'codex:limited']]);
+  assert.ok(rows.every(row => row.score.value >= rows[0].score.value));
 });
 
 test('own and small history samples pool with weight n / (n + 4)', t => {
@@ -379,16 +414,21 @@ test('route import and brief tolerate missing or malformed aliases; cost default
   const copiedRoute = pathToFileURL(join(plugin, 'lib', 'route.mjs')).href;
   const copiedCLI = pathToFileURL(join(plugin, 'scripts', 'models.mjs')).href;
   for (const content of [null, '{broken', 'null', '{}', '{"providerCostClasses":null}',
-    '{"providerCostClasses":[]}', '{"providerCostClasses":{"codex":"wrong"}}']) {
+    '{"providerCostClasses":[]}', '{"providerCostClasses":{"codex":"wrong"}}',
+    '{"modelCostClasses":null}', '{"modelCostClasses":[]}', '{"modelCostClasses":{"codex:subscription":7}}']) {
     if (content === null) rmSync(aliasFile); else writeFileSync(aliasFile, content);
     const out = f.child(`const r = await import(${JSON.stringify(copiedRoute)});
-      const entry = { provider: 'codex', public: null };
+      const entry = { id: 'codex:subscription', provider: 'codex', model: 'subscription', public: null };
       const before = r.costClass(entry);
       const { writeFileSync } = await import('node:fs');
       writeFileSync(${JSON.stringify(aliasFile)}, JSON.stringify({ providerCostClasses: { codex: '$$$$' } }));
-      console.log(JSON.stringify([before, r.costClass(entry)]));`);
+      const provider = r.costClass(entry);
+      writeFileSync(${JSON.stringify(aliasFile)}, JSON.stringify({ modelCostClasses: { 'codex:subscription': '$' }, providerCostClasses: { codex: '$$$$' } }));
+      const model = r.costClass(entry);
+      writeFileSync(${JSON.stringify(aliasFile)}, JSON.stringify({ modelCostClasses: { 'codex:subscription': 'wrong' }, providerCostClasses: { codex: '$$$' } }));
+      console.log(JSON.stringify([before, provider, model, r.costClass(entry)]));`);
     assert.equal(out.status, 0, out.stderr); assert.equal(out.stderr, '');
-    assert.deepEqual(JSON.parse(out.stdout), ['$$', '$$$$']);
+    assert.deepEqual(JSON.parse(out.stdout), ['$$', '$$$$', '$', '$$$']);
     if (content === null) rmSync(aliasFile); else writeFileSync(aliasFile, content);
     const brief = f.child(`globalThis.fetch = () => { throw new Error('unexpected network'); };
       process.argv = [process.execPath, 'models.mjs', 'brief', '--types', 'bug'];
@@ -411,6 +451,19 @@ test('only evidence-backed models form rungs; all other eligible models are unte
   known.public = null;
   assert.deepEqual(f.run(`r.ladder('bug', ${JSON.stringify(input)}, {}, {})`), []);
   assert.deepEqual(f.run(`r.untested('bug', ${JSON.stringify(input)}, {}, {})`), [known, ...unknown].map(model => model.id));
+});
+
+test('skipped models stay off untested but can rank with public evidence', t => {
+  const skipped = entry('claude', 'haiku', null, null, { public: null, own: { skipped: 'not picked', date } });
+  const known = entry('claude', 'sonnet', 80, 2, { own: { skipped: 'not picked', date } });
+  const unknown = entry('codex', 'unknown', null, null, { public: null });
+  const input = catalog(skipped, known, unknown), f = fixture(t, input);
+  assert.deepEqual(f.run(`r.untested('bug', ${JSON.stringify(input)}, {}, {})`), [unknown.id]);
+  assert.deepEqual(f.run(`r.ladder('bug', ${JSON.stringify(input)}, {}, {})`).map(row => row.id), [known.id]);
+  const out = f.brief(['--types', 'bug']);
+  assert.equal(out.status, 0, out.stderr); assert.equal(out.stderr, '');
+  assert.match(out.stdout, /^untested: codex:unknown \(models.mjs bench --models codex:unknown\)$/m);
+  assert.doesNotMatch(out.stdout, /claude:haiku/);
 });
 
 test('own and history observations count as evidence for their type using the score sample count', t => {

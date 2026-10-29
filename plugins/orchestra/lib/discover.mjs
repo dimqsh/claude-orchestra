@@ -10,7 +10,7 @@ import { claudeConfigDir } from './paths.mjs';
 const DAY = 24 * 60 * 60 * 1000;
 const recent = value => Number.isFinite(Date.parse(value)) && Date.now() - Date.parse(value) < DAY;
 const errorText = error => String(error.stderr?.trim() || error.stdout?.trim() || error.message || error);
-const runOptions = { encoding: 'utf8', timeout: 30_000, maxBuffer: 1024 * 1024 };
+const runOptions = { encoding: 'utf8', timeout: 30_000, maxBuffer: 16 * 1024 * 1024 };
 const noSandbox = { ok: false, error: 'disabled: no sandbox' };
 function execute(runner, command, args) {
   return new Promise((resolve, reject) => {

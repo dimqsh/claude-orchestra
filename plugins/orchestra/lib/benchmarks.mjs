@@ -39,6 +39,7 @@ export function matchModel(publicName, creator, catalog) {
 }
 
 const number = value => typeof value === 'number' && Number.isFinite(value) && value >= 0;
+const stripQualifier = name => name.replace(/\s*\([^()]*\)$/, '').trim();
 
 function parseAA(body, date) {
   if (!Array.isArray(body?.data)) throw new Error('invalid response');
@@ -49,13 +50,14 @@ function parseAA(body, date) {
       ['codingIndex', row.evaluations?.artificial_analysis_coding_index],
       ['livecodebench', row.evaluations?.livecodebench],
       ['outputTokensPerSecond', row.median_output_tokens_per_second],
-    ]) if (number(value)) data[field] = value;
+    ]) if (number(value)) data[field] = field === 'livecodebench' && value <= 1 ? value * 100 : value;
     const pricing = row.pricing;
     if (number(pricing?.price_1m_input_tokens) && number(pricing?.price_1m_output_tokens)) {
       data.price = { input: pricing.price_1m_input_tokens, output: pricing.price_1m_output_tokens, unit: 'USD per 1M tokens' };
     }
     // An identity with no usable figures is not public benchmark evidence.
-    return Object.keys(data).length > 2 ? [{ name: row.name, creator: row.model_creator?.name, data }] : [];
+    return Object.keys(data).length > 2 ? [{ name: stripQualifier(row.name),
+      slug: typeof row.slug === 'string' ? row.slug : null, creator: row.model_creator?.name, data }] : [];
   });
 }
 
@@ -73,8 +75,7 @@ export function parseBenchLM(text, date) {
       const cells = line.split('|').slice(1, -1).map(cell => cell.trim());
       if (cells.length !== 5 || !/^\d+$/.test(cells[0])) continue;
       const score = /^(\d+(?:\.\d+)?)%$/.exec(cells[4]);
-      const name = (/^\[(.*)\]\([^)]*\)$/.exec(cells[1])?.[1] || cells[1])
-        .replace(/\s*\([^()]*\)$/, '').trim();
+      const name = stripQualifier(/^\[(.*)\]\([^)]*\)$/.exec(cells[1])?.[1] || cells[1]);
       if (!score || !name || Number(score[1]) > 100) continue;
       rows.push({ name, creator: cells[2], data: { source: BENCHLM, date, [metric]: Number(score[1]) } });
       count++;
@@ -118,10 +119,13 @@ export async function refreshBenchmarks({ force = false, fetch = globalThis.fetc
   await updateCatalog(current => {
     const updates = new Map();
     for (const row of records) {
-      const id = matchModel(row.name, row.creator, current);
+      const id = matchModel(row.name, row.creator, current) ||
+        (row.slug && matchModel(row.slug, row.creator, current));
       if (!id) continue;
       const previous = updates.get(id);
       if (!previous) updates.set(id, { ...row.data });
+      else if (previous.source === AA && row.data.source === AA && number(row.data.codingIndex) &&
+        (!number(previous.codingIndex) || row.data.codingIndex > previous.codingIndex)) updates.set(id, { ...row.data });
       else if (previous.source === BENCHLM && row.data.source === BENCHLM) {
         for (const metric of ['swebench', 'terminalbench', 'livecodebench']) {
           if (number(row.data[metric])) previous[metric] = Math.max(previous[metric] ?? 0, row.data[metric]);

@@ -45,6 +45,15 @@ test('codex models come from codex debug models, visible ones only', t => {
   assert.equal(stored.models['codex:gpt-6.1-sol'].available.ok, true);
 });
 
+test('codex debug models accepts listings larger than 1 MB', t => {
+  const f = setup(t);
+  writeFileSync(join(f.bin, 'codex'), `#!${process.execPath}
+    console.log(JSON.stringify({ models: [{ slug: 'gpt-6.1-sol', visibility: 'list', description: 'x'.repeat(2 * 1024 * 1024) }] }));
+  `);
+  const out = f.run('const models = await d.listCodex().catch(error => { console.error(error.message); process.exit(1); }); console.log(JSON.stringify(models.map(({ model, description }) => ({ model, length: description.length }))));');
+  assert.deepEqual(out, [{ model: 'gpt-6.1-sol', length: 2 * 1024 * 1024 }]);
+});
+
 test('claude hands are haiku and sonnet; fable only with allowFable; opus never', t => {
   const f = setup(t);
   assert.deepEqual(f.run('console.log(JSON.stringify((await d.listClaude()).map(x => x.model)));'), ['haiku', 'sonnet']);
