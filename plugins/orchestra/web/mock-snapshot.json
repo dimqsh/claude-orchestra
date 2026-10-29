@@ -129,10 +129,10 @@
           "model": "claude-haiku-4-5",
           "description": "#3 export schema",
           "taskId": "3",
-          "status": "completed",
+          "status": "failed",
           "startedAt": "2026-10-29T12:23:40.000Z",
           "endedAt": "2026-10-29T12:25:50.000Z",
-          "activity": "Read export.py",
+          "activity": "Bash pytest -q",
           "tokens": {
             "input": 600,
             "cacheWrite": 1500,
@@ -309,7 +309,7 @@
                 "effort": null,
                 "startedAt": "2026-10-29T12:23:40.000Z",
                 "endedAt": "2026-10-29T12:25:50.000Z",
-                "outcome": "rework",
+                "outcome": "failed",
                 "tokens": 2300
               },
               {
@@ -407,6 +407,33 @@
               "spent": 0
             },
             "agentIds": []
+          },
+          {
+            "id": "6",
+            "title": "changelog entry",
+            "executor": "kimi",
+            "model": "kimi-k2",
+            "effort": null,
+            "type": "docs",
+            "status": "queued",
+            "attemptCount": 0,
+            "attemptList": [],
+            "dependsOn": [
+              "5"
+            ],
+            "note": "",
+            "updatedAt": "2026-10-29T12:21:30.000Z",
+            "parentId": null,
+            "branch": null,
+            "merged": false,
+            "tokens": {
+              "input": 0,
+              "cacheWrite": 0,
+              "cacheRead": 0,
+              "output": 0,
+              "spent": 0
+            },
+            "agentIds": []
           }
         ],
         "integration": {
@@ -428,7 +455,7 @@
           "done": 1,
           "running": 3,
           "review": 1,
-          "queued": 1,
+          "queued": 2,
           "failed": 0
         }
       },
