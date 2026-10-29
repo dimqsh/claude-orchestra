@@ -3,6 +3,26 @@ import { discover } from '../lib/discover.mjs';
 import { refreshBenchmarks } from '../lib/benchmarks.mjs';
 
 const commands = {
+  brief: async args => {
+    const { readCatalog, TASK_TYPES } = await import('../lib/catalog.mjs');
+    const { readLimits } = await import('../lib/limits.mjs');
+    const { history } = await import('../lib/collect.mjs');
+    const { ladder } = await import('../lib/route.mjs');
+    const usage = 'Usage: models.mjs brief [--types bug,docs]';
+    if (args.length && (args.length !== 2 || args[0] !== '--types')) throw new Error(usage);
+    const types = args.length ? [...new Set(args[1].split(','))] : TASK_TYPES;
+    if (!types.length || types.some(type => !TASK_TYPES.includes(type))) throw new Error(usage);
+    const [catalog, limits, past] = await Promise.all([readCatalog(), readLimits(), history()]);
+    const lines = [];
+    for (const type of types) {
+      const rows = ladder(type, catalog, limits, past);
+      if (!rows.length) lines.push(`${type} no available models`);
+      for (const row of rows) lines.push(`${type} ${row.rung}. ${row.id}${row.effort ? `@${row.effort}` : ''} · ${Math.round(row.score.value)} · ${row.score.evidence} · ${row.cost}${row.lowLimit ? ' · low limit' : ''}`);
+    }
+    lines.push(`Limits: ${Object.entries(limits).map(([provider, windows]) =>
+      `${provider} ${windows ? windows.map(window => `${window.usedPercent}% used/${window.name}`).join(', ') : 'unknown'}`).join(' · ')}`);
+    console.log(lines.join('\n'));
+  },
   benchmarks: async args => {
     if (args.some(arg => arg !== '--force')) throw new Error('Usage: models.mjs benchmarks [--force]');
     const result = await refreshBenchmarks({ force: args.includes('--force') });
