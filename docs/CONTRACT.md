@@ -635,7 +635,7 @@ discovery reads files and sends at most one tiny request per model.
 - A Codex model that passed its probe is not probed again until its listing changes. A failed probe, and every Gemini probe, repeats after 24 hours. `--force` does not re-probe a reusable result.
 - A Codex model that disappears from the list becomes unavailable with `not listed by codex debug models`. When `codex debug models` itself fails, every known Codex entry becomes unavailable with the error text.
 - With `allowFable` off, an existing `claude:fable` entry becomes unavailable with `disabled: allowFable is false`.
-- **Gemini has no runner.** `gemini-task.mjs` is deferred: the Gemini CLI rejects this account type (`IneligibleTierError`, it asks to migrate to Antigravity), so a runner cannot be verified. Gemini stays in the catalog with the probe's error. Routing does not rank Gemini until a runner exists, so no task goes to it.
+- **Gemini has no runner.** `gemini-task.mjs` is deferred: the Gemini CLI rejects this account type (`IneligibleTierError`, it asks to migrate to Antigravity), so a runner cannot be verified. Gemini stays in the catalog with the probe's error. Only providers with a runner (codex, claude) are ranked or listed as untested, so Gemini never appears in `brief` and no task goes to it.
 - **Kimi gets no task.** Its headless `--print` mode approves every command on the whole machine. It becomes a hand only when it offers a sandbox and gets a runner.
 - Not used: opencode (same OpenAI account as Codex), llama.cpp and any local model, DeepSeek.
 
@@ -644,7 +644,7 @@ old, or when a catalog entry has no `public` value (a new model). Each source is
 refresh, outside the catalog lock, with a 15 s timeout. It prints `matched:`, `unmatched:` and
 `source:` lines; warnings go to stderr as `Warning: <text>`.
 - **Artificial Analysis:** `GET https://artificialanalysis.ai/api/v2/data/llms/models` with header `x-api-key`. The key is `ORCHESTRA_AA_KEY` or `artificialAnalysisKey`; without one the source is skipped with the warning `no Artificial Analysis key`. Fields: `evaluations.artificial_analysis_coding_index` → `codingIndex`, `evaluations.livecodebench` → `livecodebench`, `median_output_tokens_per_second` → `outputTokensPerSecond`, `pricing.price_1m_input_tokens` and `price_1m_output_tokens` → `price`. The free tier allows 1000 requests a day; one refresh uses one. **Attribution is required**: the README and the web page link https://artificialanalysis.ai.
-- **BenchLM:** the tables "SWE-bench Verified" and "Terminal-Bench 2.0" in the README of the mirror `leoncuhk/awesome-llm-bench` (`https://raw.githubusercontent.com/leoncuhk/awesome-llm-bench/main/README.md`), no key. Fields `swebench` and `terminalbench`, in percent, source `benchlm.ai`. It fills models Artificial Analysis does not cover and is the only source without a key.
+- **BenchLM:** the tables "SWE-bench Verified", "Terminal-Bench 2.0" and "LiveCodeBench" in the README of the mirror `leoncuhk/awesome-llm-bench` (`https://raw.githubusercontent.com/leoncuhk/awesome-llm-bench/main/README.md`), no key. Fields `swebench`, `terminalbench` and `livecodebench`, in percent, source `benchlm.ai`. SWE-bench and Terminal-Bench are required for a valid response; a missing or malformed LiveCodeBench table is skipped. It fills models Artificial Analysis does not cover and is the only source without a key, but the mirror lists only the top 10 models per benchmark. In a live run it held no coding score for any discovered model, so the free Artificial Analysis key and the own benchmark (section 19) are what give routing its evidence. A row name loses one trailing parenthesized qualifier before matching (`GPT-6.1 Sol (Max)` becomes `GPT-6.1 Sol`; a name that is only brackets stays unmatched), and of several rows that map to the same model and metric the highest score is kept.
 - Where both sources know a model, Artificial Analysis wins and BenchLM adds nothing.
 - **Matching.** Public names and catalog names are lowercased, a leading vendor or executor prefix is removed, and spaces and dots become `-`. A public name matches an entry only when it equals the `id`, `model` or `resolved` of exactly one entry; otherwise `data/model-aliases.json` is consulted. There is no fuzzy matching. An unmatched entry gets `{ source: null, note: "no public data" }`.
 - **Failures.** A failed or keyless source never replaces or re-dates the last good figures of an entry, and a failed refresh does not set `benchmarksAt`, so the next run retries.
@@ -688,12 +688,12 @@ error spent tokens; they count toward the cap but belong to no fixture.
 ```
 models.mjs bench --estimate         one line per available Claude and Codex model: "<id>: 150000 tokens per model (budget estimate)"
 models.mjs bench --models a,b       run the named models now; a bare name, or provider:model when the name is ambiguous
-models.mjs bench --skip a,b         own = { skipped: "not picked", date }; overwrites an existing result
+models.mjs bench --skip a,b         own = { skipped: "not picked", date } when own is null or already skipped; an entry with results is kept
 models.mjs bench --new              automatic run, see below
 ```
 `--skip` and `--models` may be combined, but a model cannot be in both. `--estimate` takes no
 `--skip`; `--new` takes no `--models`. Output lines: `<id>: done`, `<id>: partial (<reason>)`,
-`<id>: skipped (not picked)`.
+`<id>: skipped (not picked)`, `<id>: kept (already benchmarked)`.
 
 **Automatic runs.** `bench --new` does nothing unless `benchAuto` is `true`. It runs only entries
 whose `own` is `null` or a partial result that stopped for `board active`, `low limit` or a
@@ -709,13 +709,14 @@ does not compete with an orchestration.
 
 **Setup.** `/orchestra:setup` runs `discover --force`; asks for the optional Artificial Analysis
 key and stores it as `artificialAnalysisKey`; runs `benchmarks --force`; shows `bench --estimate`;
-lets the user pick models (none is fine). It then starts ONE call, in the background, so that a
-second `bench` never meets `bench.lock` and loses the skip list: `bench --models <picked> --skip
-<the rest>`. The skip list is written before the first run. `--models` is left out when nothing
+lets the user pick models (none is fine). It then makes ONE `bench` call, so that a second call
+never meets `bench.lock` and loses the skip list: `bench --models <picked> --skip <the rest>`, in
+the background. The skip list is written before the first run. `--models` is left out when nothing
 was picked and `--skip` when everything was; an empty list is an error. When nothing was picked,
-`bench --skip <all>` runs alone in the foreground. `<the rest>` leaves out models that already
-have a result, because `--skip` overwrites it. After that call ends, setup sets `benchAuto:
-true`. The first benchmark therefore runs only with consent and after the estimate.
+`bench --skip <all>` runs alone, in the foreground, and starts no run. When the estimate lists no
+model there is nothing to run or skip, and no call is made. A model in `<the rest>` that already
+has results is kept by `--skip`. After the call ends, setup sets `benchAuto: true`. The first
+benchmark therefore runs only with consent and after the estimate.
 
 ## 20. Routing (`lib/route.mjs`, `models.mjs brief`, board attempts)
 
@@ -725,8 +726,14 @@ changing behavior, multi-file moves), `tests` (tests that follow an existing pat
 (README, comments, text), `search` (find where something lives, explain code; read-only). Every
 subtask has exactly one.
 
-**Candidates.** Catalog entries with `available.ok`, except Kimi, Gemini until it has a runner,
-any Opus entry and Fable unless `allowFable` is `true`.
+**Candidates.** Catalog entries with `available.ok` and a provider with a runner (`codex` or
+`claude`), except any Opus entry and Fable unless `allowFable` is `true`. Gemini and Kimi are
+filtered by provider, so they are never ranked or listed. A candidate has *evidence* for a type
+when it has a public value on the ladder's primary metric, or pooled own and history n of at
+least 1 for that type. Only candidates with evidence take part in rungs, the best score and the
+85% bar; the others are *untested* for that type (`untested(type, catalog, limits, history)` in
+`lib/route.mjs` returns their ids). The primary metric and the neutral prior are still computed
+over all candidates, tested or not.
 
 **Score** (0 to 100, per model and task type):
 1. *Prior.* One public metric per ladder: the one that most candidates have among `codingIndex` (Artificial Analysis), `swebench`, `terminalbench`, `livecodebench`; ties go in that order. A model without it gets the median of the other candidates' values, or 50 if none has one.
@@ -754,7 +761,8 @@ window is `low limit`: still listed, skipped for rung 1.
 - Opus starts a subtask at rung 1 unless it is risky. Escalation climbs the rungs. The last step re-runs rung 3 at its top supported effort: the last value of that entry's `efforts` array in `models.json`. A Claude entry has no efforts, so for it the last step is a plain re-run.
 
 **Brief.** `models.mjs brief [--types a,b]` prints at most 20 lines: for each type up to three
-rungs, then one limits line.
+rungs (or one `no evidence yet` line), then one `untested:` line when it is not empty, then one
+limits line.
 ```
 bug 1. claude:sonnet · 73 · own 2/2 · AA 59 (2026-10-28) · $$
 bug 2. codex:gpt-5.6-terra@high · 79 · AA 79 (2026-10-28) · $$
@@ -764,8 +772,29 @@ Limits: claude 41% used/5h, 12% used/7d · codex 8% used/5h, 3% used/week · gem
 Line shape: `<type> <rung>. <provider>:<model>[@<effort>] · <score> · <evidence> · <cost>[ · low limit]`.
 Evidence parts: `own <passed>/<total>`, `history <n> tasks, <p>% first try`, and the public metric
 as `<source> [<metric> ]<value> (<date>)` with `AA` for Artificial Analysis and `BenchLM`
-for BenchLM, or `no public data · neutral prior <n>`, which means the model has no value on the ladder's primary metric and takes the median of the other candidates. A type without candidates prints
-`<type> no available models`. The numbers above are made up.
+for BenchLM, or `no public data · neutral prior <n>`, which means the model has no value on the
+ladder's primary metric and takes the median of the other candidates. The numbers above are made
+up.
+
+A type with no candidate that has evidence prints `<type> no evidence yet`. With no eligible model
+at all it prints `<type> no available models`. After the type lines and before `Limits:`, one line
+lists the models that are untested for every type shown, each once, with the command that would
+test them, and is left out when empty:
+```
+bug no evidence yet
+logic no evidence yet
+refactor no evidence yet
+tests no evidence yet
+docs no evidence yet
+search no evidence yet
+untested: claude:haiku, claude:sonnet, codex:gpt-5.6-terra, codex:gpt-6.1-sol (models.mjs bench --models claude:haiku,claude:sonnet,codex:gpt-5.6-terra,codex:gpt-6.1-sol)
+Limits: claude unknown · codex unknown · gemini unknown · kimi unknown
+```
+That is a catalog with no public data and no benchmark result. Types and models mix: with own
+results for `claude:sonnet` on five types and none on `search`, the five types print
+`<type> 1. claude:sonnet · 60 · own 1/1 · no public data · neutral prior 50 · $$` (the score
+depends on the results), `search` prints `no evidence yet`, and `untested:` lists the three models
+without any result.
 
 **Board.** Each task stores its choice and one record per attempt:
 ```json
@@ -790,4 +819,5 @@ for BenchLM, or `no public data · neutral prior <n>`, which means the model has
 - Every agent brief lists the files that may change and a checkable done criterion. A hand that finds a problem outside its scope reports it. The review checks scope first and treats extra changes as rework.
 - Sub-agents only when the agent brief allows them and names the sub-agent's model and effort: the cheapest Codex line of `models.mjs brief` for the type of the hard part. With no Codex line, no sub-agent. A hand never picks a model. A sub-agent is always Codex, one level deep.
 - Escalation: a rung gets two attempts, the first and one rework. Then the next rung; after rung 3, rung 3 once more at its top supported effort (the last value of the entry's `efforts` array; a plain re-run for a Claude entry); then `failed`. `board exec` takes `--effort` for Codex hands only.
+- A type with `no evidence yet`: Opus picks the hand itself from the `untested:` line, model and effort by its own judgment, and writes `untested: <reason>` in the plan's why column. At the end of the report it suggests `/orchestra:setup` or the `bench --models` command from that line. Board attempts of that hand become history for the next run.
 - Last command of a run, after `board finish`: `models.mjs bench --new` in the background. It does nothing without `benchAuto` or new models.

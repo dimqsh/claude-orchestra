@@ -46,7 +46,7 @@ reading the same files twice.
 | [Node.js](https://nodejs.org) | 20+, 22.13+ for the memory | runs the scripts |
 | [Codex CLI](https://github.com/openai/codex) | 0.165.0+, logged in with `codex login` | runs Codex tasks |
 | git | any | one worktree per subtask |
-| [Artificial Analysis](https://artificialanalysis.ai) API key | optional, free | public coding scores and prices; without it only BenchLM scores load |
+| [Artificial Analysis](https://artificialanalysis.ai) API key | optional, free | public coding scores and prices; with the own benchmark, it is what gives routing its evidence |
 
 ### Install
 
@@ -130,7 +130,7 @@ run.
 | `models.mjs brief [--types a,b]` | Prints the ranking Opus reads: up to three rungs per task type, at most 20 lines. |
 | `models.mjs bench --estimate` | Lists the models the own benchmark can run and its token cap. |
 | `models.mjs bench --models a,b` | Runs the own benchmark for the models you name. |
-| `models.mjs bench --skip a,b` | Marks models as not picked; they never run automatically. |
+| `models.mjs bench --skip a,b` | Marks models as not picked; they never run automatically. A model that already has benchmark results is kept (`kept (already benchmarked)`). |
 | `models.mjs bench --new` | Benchmarks models nobody has run yet. The orchestrate skill starts it in the background after a run; it does nothing without `benchAuto: true`. |
 
 An example of what `brief` prints (made-up numbers):
@@ -140,6 +140,24 @@ bug 1. claude:sonnet · 73 · own 2/2 · AA 59 (2026-10-28) · $$
 bug 2. codex:gpt-5.6-terra@high · 79 · AA 79 (2026-10-28) · $$
 bug 3. codex:gpt-6.1-sol@high · 83 · history 6 tasks, 83% first try · $$$
 ```
+
+**Evidence.** Only models with evidence for a type are ranked: a public score on the primary
+metric, or at least one own-benchmark or board task of that type. Without any, `brief` prints
+`<type> no evidence yet` and one `untested:` line with the command that would test the models:
+
+```
+bug no evidence yet
+logic no evidence yet
+refactor no evidence yet
+tests no evidence yet
+docs no evidence yet
+search no evidence yet
+untested: claude:haiku, claude:sonnet, codex:gpt-5.6-terra, codex:gpt-6.1-sol (models.mjs bench --models claude:haiku,claude:sonnet,codex:gpt-5.6-terra,codex:gpt-6.1-sol)
+Limits: claude unknown · codex unknown · gemini unknown · kimi unknown
+```
+
+For such a type Opus picks a hand from the untested models by its own judgment, marks it
+`untested` in the plan and suggests `/orchestra:setup` or `bench` at the end of its report.
 
 **Score.** Each model gets a score from 0 to 100 per task type. The prior is one public metric
 per type, the one most candidates have (ties go to the Artificial Analysis coding index, then
@@ -168,19 +186,21 @@ models through `codex-task.mjs` (the exact flags are in [`docs/CONTRACT.md`](doc
 `bench --new` runs only with `benchAuto: true` and never runs models you skipped. It is
 postponed while a board is active (not finished and updated in the last 30 minutes) or the
 provider is above 70% of a limit window: the run stops, and the next `bench --new` picks up where
-it left off. The orchestrate skill starts it in the background after each run, so it never starts
-by itself; it does nothing without `benchAuto` or new models.
+it left off. The orchestrate skill starts it in the background after each run and nothing else
+starts it; it does nothing without `benchAuto` or new models.
 
-**Providers.** Claude: `haiku` and `sonnet` through the `Agent` tool; `fable` only with
-`allowFable: true`; `opus` is the brain and reviewer, never a hand. Codex: every model
-`codex debug models` lists. Gemini is discovered, but its runner is deferred: the Gemini CLI
-rejects some account types (`IneligibleTierError`, asks to migrate to Antigravity), so it is listed
-unavailable with that error. Kimi is listed `disabled: no sandbox` and never gets a task. No local
+**Providers.** Only providers with a runner, Claude and Codex, are ranked or listed. Claude:
+`haiku` and `sonnet` through the `Agent` tool; `fable` only with `allowFable: true`; `opus` is the
+brain and reviewer, never a hand. Codex: every model `codex debug models` lists. Gemini is
+discovered, but its runner is deferred: the Gemini CLI rejects some account types
+(`IneligibleTierError`, asks to migrate to Antigravity), so it is listed unavailable with that
+error and never ranked. Kimi is listed `disabled: no sandbox` and never gets a task. No local
 models run.
 
 Public scores and prices come from [Artificial Analysis](https://artificialanalysis.ai), which
-needs a free API key. The BenchLM tables in the `leoncuhk/awesome-llm-bench` mirror fill the gaps
-and need no key. Every public score in the catalog carries its source and date.
+needs a free API key. The free key and the own benchmark are what give routing its evidence. The
+keyless fallback, the BenchLM tables in the `leoncuhk/awesome-llm-bench` mirror, lists only the
+top 10 models per benchmark; in a live test it held no coding score for any discovered model. Every public score in the catalog carries its source and date.
 
 ## Shared memory
 
@@ -293,7 +313,7 @@ Run `/orchestra:setup`. Per-agent rows need Claude Code 2.1.293 or newer (`claud
 
 Run `node "<plugin>/scripts/models.mjs" discover --force` and read the `unavailable:` line;
 the catalog entry in `~/.claude/orchestra/models.json` holds the error. Fable needs
-`allowFable: true`. Gemini and Kimi never get tasks (see Configuration and Models and routing).
+`allowFable: true`. Gemini and Kimi are never ranked and never get tasks (see Configuration and Models and routing).
 Codex models appear only when `codex debug models` lists them.
 </details>
 

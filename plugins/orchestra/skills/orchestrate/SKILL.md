@@ -23,9 +23,9 @@ branch. Accepted work is merged into an integration branch, and at the end it re
 working tree in one step.
 
 Who may be a hand: Haiku and Sonnet through `Agent`, GPT models through Codex. Fable only when
-`allowFable` is `true` in `~/.claude/orchestra/config.json`. Opus never. Gemini and Kimi get no
-task: Gemini has no runner yet and Kimi has no sandbox. Routing never ranks Kimi, and it does
-not rank Gemini until its runner exists.
+`allowFable` is `true` in `~/.claude/orchestra/config.json`. Opus never. Only providers with a
+runner, Claude and Codex, are ranked or listed. Gemini (no runner yet) and Kimi (no sandbox) get
+no task and never appear.
 
 Three habits keep the board, the graph and the token savings working:
 - record every status change of a subtask with `board`;
@@ -59,7 +59,8 @@ Give every subtask one type. The catalog scores models per type.
 ## Routing
 
 `models.mjs brief` prints the ranking: for each task type, up to three rungs, cheapest first.
-Example with made-up numbers:
+Only models with evidence for the type take part: a public score on the primary metric, or at
+least one own-benchmark or board task of that type. Example with made-up numbers:
 ```
 bug 1. claude:sonnet · 73 · own 2/2 · AA 59 (2026-10-28) · $$
 bug 2. codex:gpt-5.6-terra@high · 79 · AA 79 (2026-10-28) · $$
@@ -86,6 +87,29 @@ provider's default.
 Start every subtask at rung 1. Start higher only when a mistake would be hard to spot (subtle
 logic, data, security, concurrency); say so in the plan. A mistake that tests or a quick look will
 catch belongs on rung 1. Write the rung and the reason into the plan table in step 1.
+
+**A type with no evidence.** When public data covers none of your models and the own
+benchmark has not run, no model has evidence. `brief` then prints `<type> no evidence yet` for
+that type, and one `untested:` line naming the models that have no evidence for any type shown,
+with the command that would test them:
+```
+bug no evidence yet
+logic no evidence yet
+refactor no evidence yet
+tests no evidence yet
+docs no evidence yet
+search no evidence yet
+untested: claude:haiku, claude:sonnet, codex:gpt-5.6-terra, codex:gpt-6.1-sol (models.mjs bench --models claude:haiku,claude:sonnet,codex:gpt-5.6-terra,codex:gpt-6.1-sol)
+Limits: claude unknown · codex unknown · gemini unknown · kimi unknown
+```
+Some types can be empty while others have rungs: `search` has no own-benchmark fixture, so
+without public data it stays empty until board history builds up. For an empty type, pick the
+hand yourself from the `untested:` line, model and effort by your own judgment, and write
+`untested: <your reason>` in the plan table's why column. With no `untested:` line, choose among
+the models the other types rank. The hand's attempts go on the board, so the next run has history
+for it. At the end of the report, suggest `/orchestra:setup` or the `bench --models` command from
+the `untested:` line. `<type> no available models` means no hand can take a task: stop and tell
+the user to run `/orchestra:setup`.
 
 ## Hands
 
@@ -115,7 +139,7 @@ BRIEF
 
 - Check the session model. Your system prompt names it. The final review is always Opus 5.5. On Opus 5.5 you review yourself. On any other model, tell the user in one line that the final review and every accepted/rework verdict go to a read-only `Agent` with `model: "opus"` (step 3).
 - Memory first: `kb context` and `kb search "<main words of the task>"`. Don't rediscover what is already there.
-- Models: `node "${CLAUDE_PLUGIN_ROOT}/scripts/models.mjs" discover && node "${CLAUDE_PLUGIN_ROOT}/scripts/models.mjs" benchmarks && node "${CLAUDE_PLUGIN_ROOT}/scripts/models.mjs" brief`. Discovery skips itself within 24 hours, and the public data refresh runs weekly or when discovery finds a new model, so this is cheap. Read the ranking once and keep it in mind for the split. If `brief` fails or lists no model, run `models.mjs discover --force` once; if that does not help, stop and tell the user to run `/orchestra:setup`.
+- Models: `node "${CLAUDE_PLUGIN_ROOT}/scripts/models.mjs" discover && node "${CLAUDE_PLUGIN_ROOT}/scripts/models.mjs" benchmarks && node "${CLAUDE_PLUGIN_ROOT}/scripts/models.mjs" brief`. Discovery skips itself within 24 hours, and the public data refresh runs weekly or when discovery finds a new model, so this is cheap. Read the ranking once and keep it in mind for the split. If `brief` fails or prints `no available models`, run `models.mjs discover --force` once; if that does not help, stop and tell the user to run `/orchestra:setup`.
 - `git status`. Without a git repository there are no worktrees: suggest `git init` to the user, or work in one folder as before and make sure parallel subtasks touch different files.
 - Find how the project builds and runs tests, if memory doesn't say. You need the command, not the file contents.
 - If memory has no `context` note for this project, write one with what you just learned (layout, test command, conventions, 5-10 lines). Otherwise every agent would work it out again:
@@ -131,8 +155,9 @@ worktree, so parallel agents never overwrite each other. Two subtasks that chang
 lines still conflict at merge time: combine them or order them (`--deps`).
 
 Pick the hand for each subtask from the ranking for its type, and show the plan as a table. The
-last column names the evidence from the ranking; a row that names a model without a reason is not
-done. The example uses the `bug` lines from the Routing section above:
+last column names the evidence from the ranking, or `untested: <reason>` for a type with no
+evidence; a row that names a model without a reason is not done. The example uses the `bug` lines
+from the Routing section above:
 
 ```text
 | # | task             | type | executor | model@effort     | why (evidence)                                                      |
@@ -317,7 +342,7 @@ Short, in the user's language, in this shape:
 
 **Memory:** <notes added and how often agents found what they needed, from kb stats>
 
-**Left / risks:** <what isn't done or wasn't checked; "nothing" if so>
+**Left / risks:** <what isn't done or wasn't checked; "nothing" if so. If a subtask used an untested model, suggest `/orchestra:setup` or the `bench --models` command from the `untested:` line>
 ````
 
 Write "done" only if the final check passed. If something failed or wasn't checked, it's "not
