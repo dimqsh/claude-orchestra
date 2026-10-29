@@ -176,12 +176,15 @@ Fable keep their own classes and every Codex model is `$$$`.
 
 **Ladder.** Rung 1 is the cheapest candidate that scores at least 85% of the best, skipping
 providers marked `low limit` (above 90% of any limit window). Rung 2 is the next candidate that
-scores at least 5 points higher, or sits in a higher cost class and scores at least as much as
-rung 1. Rung 3 is the best score; when scores tie, the candidate in the higher cost class wins,
-then the one with the higher prior, then the lower id. Three equal own results give three rungs,
-cheapest first. Rung 1 runs at medium effort, rungs 2 and 3 at high (the nearest the model
-supports). Opus starts a subtask at rung 1; a risky one starts higher. When a subtask fails, it
-climbs the rungs, and the last step re-runs rung 3 at its top effort.
+scores at least 5 points higher, or sits in a higher cost class and scores at least as much as rung
+1. Rung 3 is the best score; when scores tie, the candidate in the higher cost class wins, then the
+one with the higher prior, then the one the provider lists first. Three tied models in three
+different cost classes give three rungs, cheapest first. When tied models share a cost class, the
+top rung is the one the provider lists first (Codex lists its newest flagship first), because
+routing keeps the provider's listing order on a full tie. Rung 1 runs at medium effort, rungs 2 and
+3 at high (the nearest the model supports). Opus starts a subtask at rung 1; a risky one starts
+higher. When a subtask fails, it climbs the rungs, and the last step re-runs rung 3 at its top
+effort.
 
 **Own benchmark.** Six tiny fixture repositories (bug, logic, refactor, tests, docs and a
 multi-file change that counts as a second refactor sample) each have a hidden check script.
