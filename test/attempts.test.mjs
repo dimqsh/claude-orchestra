@@ -1,12 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, writeFile, rm, realpath } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, writeFile, appendFile, rm, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { projectSlug } from '../plugins/orchestra/lib/paths.mjs';
-import { renderRows } from '../plugins/orchestra/lib/render.mjs';
+import { renderRows, renderRow } from '../plugins/orchestra/lib/render.mjs';
 
 const script = fileURLToPath(new URL('../plugins/orchestra/scripts/board.mjs', import.meta.url));
 const collector = new URL('../plugins/orchestra/lib/collect.mjs', import.meta.url).href;
@@ -81,7 +81,7 @@ test('an escalated task keeps the failed attempt of the cheaper model and exec a
   assert.deepEqual(f.task().attempts[2], { n: 3, provider: 'sonnet', model: null, effort: null, startedAt: f.task().attempts[2].startedAt, endedAt: null, outcome: null, tokens: null });
 });
 
-test('attempt tokens sum matching agents and jobs since the attempt start, without earlier attempts or parent tokens', async t => {
+test('attempt tokens sum all matching agents and jobs and subtract earlier attempts, excluding other task ids', async t => {
   const f = await fixture(t);
   await f.transcript(); f.board('init', 'tokens', '--session', f.sessionId);
   f.board('add', '1', 'fix', '--exec', 'codex', '--type', 'bug'); f.board('set', '1', 'running');
@@ -96,10 +96,56 @@ test('attempt tokens sum matching agents and jobs since the attempt start, witho
   await mkdir(dirname(agentPath), { recursive: true });
   await writeFile(agentPath, JSON.stringify({ type: 'assistant', cwd: f.cwd, timestamp: startedAt, message: { id: 'a', model: 'claude-sonnet', stop_reason: 'end_turn', usage: { input_tokens: 5, output_tokens: 2, cache_read_input_tokens: 500 }, content: [] } }) + '\n');
   await json(agentPath.replace('.jsonl', '.meta.json'), { description: '#1 task' });
-  f.board('set', '1', 'rework'); assert.equal(f.task().attempts[0].tokens, 31);
+  f.board('set', '1', 'rework'); assert.equal(f.task().attempts[0].tokens, 3031);
   f.board('set', '1', 'running'); f.board('set', '1', 'done'); assert.equal(f.task().attempts[1].tokens, 0);
   const snapshot = f.collect().board.tasks[0];
   assert.equal(snapshot.attemptCount, 2); assert.deepEqual(snapshot.attemptList, f.task().attempts); assert(!Object.hasOwn(snapshot, 'attempts'));
+});
+
+test('SendMessage-style rework records growing tokens from the same Sonnet agent', async t => {
+  const f = await fixture(t); await f.transcript();
+  f.board('init', 'resumed Sonnet', '--session', f.sessionId);
+  f.board('add', '1', 'fix', '--exec', 'sonnet', '--model', 'claude-sonnet-4-5-20250929');
+  f.board('set', '1', 'running');
+  const startedAt = new Date().toISOString(), agentPath = join(dirname(f.transcriptPath), f.sessionId, 'subagents/agent-resumed.jsonl');
+  await mkdir(dirname(agentPath), { recursive: true });
+  const row = (id, spent) => JSON.stringify({ type: 'assistant', cwd: f.cwd, timestamp: new Date().toISOString(),
+    message: { id, model: 'claude-sonnet-4-5-20250929', stop_reason: 'end_turn', usage: { input_tokens: spent, cache_read_input_tokens: 1000 }, content: [] } }) + '\n';
+  await writeFile(agentPath, row('first', 30));
+  await json(agentPath.replace('.jsonl', '.meta.json'), { description: '#1 fix' });
+  f.board('set', '1', 'rework'); assert.equal(f.task().attempts[0].tokens, 30);
+  const first = f.task().attempts[0], originalAgentStart = f.collect().agents[0].startedAt;
+  assert(originalAgentStart >= startedAt);
+  f.board('set', '1', 'running');
+  await appendFile(agentPath, row('after-SendMessage', 17));
+  assert.equal(f.collect().agents[0].startedAt, originalAgentStart);
+  assert(originalAgentStart < f.task().attempts[1].startedAt);
+  f.board('set', '1', 'rework');
+  assert.deepEqual(f.task().attempts.map(a => a.tokens), [30, 17]);
+  f.board('set', '1', 'running');
+  await appendFile(agentPath, row('second-SendMessage', 9));
+  f.board('set', '1', 'done');
+  assert.deepEqual(f.task().attempts.map(a => a.tokens), [30, 17, 9]);
+  assert.deepEqual(f.task().attempts[0], first);
+});
+
+test('nothing matching the exact task id records null even when a session and child jobs exist', async t => {
+  const f = await fixture(t); await f.transcript();
+  f.board('init', 'unobserved', '--session', f.sessionId); f.board('add', '1', 'fix', '--exec', 'codex');
+  for (const taskId of ['1.1', '2']) await json(join(f.home, 'jobs', `${taskId}.json`), {
+    id: taskId, cwd: f.cwd, label: `#${taskId} unrelated`, status: 'completed', startedAt: new Date().toISOString(), tokens: { spent: 100 },
+  });
+  f.board('set', '1', 'running'); f.board('set', '1', 'done');
+  assert.equal(f.task().attempts[0].tokens, null);
+});
+
+test('unknown earlier attempt costs keep later costs null despite matching task work', async t => {
+  const f = await fixture(t); await f.transcript();
+  f.board('init', 'unknown baseline', '--session', f.sessionId); f.board('add', '1', 'fix', '--exec', 'codex');
+  f.board('set', '1', 'running'); f.board('set', '1', 'rework'); assert.equal(f.task().attempts[0].tokens, null);
+  await json(join(f.home, 'jobs/current.json'), { id: 'current', cwd: f.cwd, label: '#1 fix', status: 'completed', startedAt: new Date().toISOString(), tokens: { spent: 50 } });
+  f.board('set', '1', 'running'); f.board('set', '1', 'done');
+  assert.deepEqual(f.task().attempts.map(a => a.tokens), [null, null]);
 });
 
 test('attempt token collection uses the board session and tolerates a missing bound transcript', async t => {
@@ -113,7 +159,7 @@ test('history counts first-try acceptance per model and type across boards and a
   assert.deepEqual(f.evaluate('console.log(JSON.stringify(await collect.history()));'), {});
   const attempt = (n, model, outcome, tokens, provider = 'codex') => ({ n, provider, model, effort: null, startedAt: '2026-10-29T00:00:00Z', endedAt: outcome ? '2026-10-29T00:01:00Z' : null, outcome, tokens });
   await json(f.boardPath, { tasks: [
-    { id: '1', type: 'bug', attempts: [attempt(1, 'cheap', 'rework', 10), attempt(2, 'cheap', 'accepted', 20)] },
+    { id: '1', type: 'bug', attempts: [attempt(2, 'cheap', 'accepted', 20), attempt(1, 'cheap', 'rework', 10)] },
     { id: '2', type: 'bug', attempts: [attempt(1, 'cheap', 'failed', 30), attempt(2, 'strong', 'accepted', 80)] },
     { id: '3', type: 'docs', attempts: [attempt(1, 'cheap', 'accepted', null)] },
     { id: '4', type: 'bug', attempts: [attempt(1, 'cheap', null, null)] },
@@ -127,9 +173,23 @@ test('history counts first-try acceptance per model and type across boards and a
   await writeFile(join(f.home, 'boards/archive/torn.json'), '{');
   assert.deepEqual(f.evaluate('console.log(JSON.stringify(await collect.history()));'), {
     'codex:cheap': { bug: { tasks: 3, firstTry: 1 / 3, avgTokens: 20 }, docs: { tasks: 1, firstTry: 1, avgTokens: null } },
-    'codex:strong': { bug: { tasks: 1, firstTry: 0, avgTokens: 80 } },
+    'codex:strong': { bug: { tasks: 1, firstTry: 1, avgTokens: 80 } },
     'gemini:cheap': { search: { tasks: 1, firstTry: 1, avgTokens: 12 } },
   });
+});
+
+test('history normalizes every legacy Claude executor and combines alias and canonical attempts', async t => {
+  const f = await fixture(t);
+  const task = (provider, n = 2, outcome = 'accepted', tokens = 12) => ({ n, provider, model: `claude-${provider}`, outcome, tokens });
+  await json(f.boardPath, { tasks: ['sonnet', 'haiku', 'opus', 'fable'].map((alias, i) => ({
+    id: String(i), type: 'docs', attempts: [task(alias)],
+  })).concat({ id: 'mixed', type: 'bug', attempts: [
+    { ...task('sonnet', 2, 'accepted', 20), provider: 'claude' }, task('sonnet', 1, 'rework', 10),
+  ] }) });
+  const stats = f.evaluate('console.log(JSON.stringify(await collect.history()));');
+  assert.deepEqual(Object.keys(stats).sort(), ['claude:claude-fable', 'claude:claude-haiku', 'claude:claude-opus', 'claude:claude-sonnet']);
+  for (const alias of ['sonnet', 'haiku', 'opus', 'fable']) assert.deepEqual(stats[`claude:claude-${alias}`].docs, { tasks: 1, firstTry: 1, avgTokens: 12 });
+  assert.deepEqual(stats['claude:claude-sonnet'].bug, { tasks: 1, firstTry: 0, avgTokens: 30 });
 });
 
 test('old boards without attempt records still load numeric attempts into the snapshot and show', async t => {
@@ -170,6 +230,41 @@ test('model and effort executor columns align at narrow and wide widths with unc
     assert.equal(rows[0].indexOf('6.1-sol@high'), rows[1].indexOf('sonnet'));
     assert.equal(rows[0].indexOf('123'), rows[1].indexOf('123')); assert.equal(rows[1].indexOf('123'), rows[2].indexOf('123'));
     assert(rows.every(row => Array.from(row).length <= width));
+    assert.deepEqual(renderRows(session, { width, color: true }).map(row => row.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '')), rows);
+  }
+});
+
+test('board-less agent rows retain executor names even when model ids and effort are present', () => {
+  const agents = [
+    { id: 'a', executor: 'sonnet', model: 'claude-sonnet-4-5-20250929', effort: 'high' },
+    { id: 'b', executor: 'codex', model: 'gpt-6.1-sol', effort: 'high' },
+  ].map(agent => ({ ...agent, description: 'work', status: 'running', tokens: { spent: 123 }, activity: 'Bash tests' }));
+  for (const width of [60, 100, 140]) {
+    const rows = renderRows({ agents }, { width });
+    assert.match(rows[0], /Sonnet\s+123/); assert.match(rows[1], /Codex\s+123/);
+    assert(rows.every(row => !row.includes('@') && !row.includes('20250929') && !row.includes('6.1-sol')));
+    assert.deepEqual(renderRows({ agents }, { width, color: true }).map(row => row.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '')), rows);
+  }
+  assert.match(renderRow({ ...agents[0], label: 'work' }), /Sonnet\s+123/);
+});
+
+test('board model labels drop date suffixes and cap the aligned executor column at 14 characters', () => {
+  const tasks = [
+    { id: '1', executor: 'sonnet', model: 'claude-sonnet-4-5-20250929', effort: 'low' },
+    { id: '1.1', parent: '1', executor: 'codex', model: 'gpt-a-model-name-that-is-very-long', effort: 'xhigh' },
+    { id: '2', executor: 'codex', model: 'gpt-6.1-sol', effort: 'high' },
+  ].map(task => ({ ...task, title: 'task', status: 'running', tokens: { spent: 123 }, note: 'Bash tests' }));
+  for (const width of [60, 100, 140]) {
+    const session = { board: { tasks } }, rows = renderRows(session, { width });
+    assert.match(rows[0], /sonnet-4-5@low/); assert(rows.every(row => !row.includes('20250929')));
+    const start = rows[0].indexOf('sonnet-4-5@low');
+    assert.equal(rows[0].slice(start, start + 14), 'sonnet-4-5@low');
+    assert.equal(rows[1].slice(start, start + 14), 'a-model-name-…');
+    assert.equal(rows[2].slice(start, start + 14), '6.1-sol@high  ');
+    for (const row of rows) {
+      assert.equal(row.slice(start + 15, start + 21), '   123');
+      assert.match(row, /Bash/); assert(Array.from(row).length <= width);
+    }
     assert.deepEqual(renderRows(session, { width, color: true }).map(row => row.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '')), rows);
   }
 });
