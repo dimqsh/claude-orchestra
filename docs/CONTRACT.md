@@ -327,8 +327,9 @@ the job's `provider`, `codex` when the field is missing, `model` = the job's mod
 `web/index.html`: single self-contained file (inline CSS/JS/SVG, no external requests, works
 offline). Consumes `/events` (fallback: poll `/api/snapshot` every 2 s). `?mock=1` loads
 `mock-snapshot.json` and animates it (tokens grow, statuses advance) for demos. `mock-snapshot.json`
-must validate against section 7 and contain 2 sessions (two projects), one with a board of 5 tasks
-across codex/sonnet/opus including a rework and a failed attempt.
+must validate against section 7 and contain 2 sessions (two projects), one with a board of 7 tasks
+across codex/sonnet/haiku including a rework and a failed attempt. An escalation goes to Codex
+(`gpt-6.1-sol`), never to Opus, because Opus is never a hand.
 
 ---
 
@@ -542,7 +543,7 @@ plugins/orchestra/lib/bench.mjs           own benchmark                         
 plugins/orchestra/lib/route.mjs           score, cost class, ladder                 section 20
 plugins/orchestra/lib/runner.mjs          shared runner behind codex-task.mjs       sections 11 and 15
 plugins/orchestra/scripts/models.mjs      CLI for all of the above
-plugins/orchestra/data/model-aliases.json public name aliases, provider cost classes
+plugins/orchestra/data/model-aliases.json public name aliases, model and provider cost classes
 plugins/orchestra/bench/<fixture>/        six fixture repositories                  section 19
 ```
 
@@ -573,7 +574,7 @@ plugins/orchestra/bench/<fixture>/        six fixture repositories              
 - `model` is what the runner gets: a Claude alias (`haiku`, `sonnet`, `fable`), a Codex slug, a Gemini model or `default`, or Kimi's `default`. Claude entries also carry `resolved`, the concrete model id seen in recent transcripts (or null).
 - `runner`: `Agent` (Claude), `codex-task.mjs`, `gemini-task.mjs`, `kimi-task.mjs`. `efforts`: the levels the CLI reports; empty for Claude.
 - `available`: `{ ok, error?, probed, checkedAt }`. `probed` is true when a real model request was made. An unavailable entry stays in the catalog with its error.
-- `public`: `null` before the first refresh; `{ source: null, note: "no public data" }` for a model nothing matched. Otherwise the figures of one source: `codingIndex`, `livecodebench`, `outputTokensPerSecond`, `price` (Artificial Analysis, source `artificialanalysis.ai`) or `swebench`, `terminalbench` (BenchLM, source `benchlm.ai`). Every public figure carries its `source` and `date`.
+- `public`: `null` before the first refresh; `{ source: null, note: "no public data" }` for a model nothing matched. Otherwise the figures of one source: `codingIndex`, `livecodebench`, `outputTokensPerSecond`, `price` (Artificial Analysis, source `artificialanalysis.ai`) or `swebench`, `terminalbench`, `livecodebench` (BenchLM, source `benchlm.ai`). `livecodebench` is a percentage (0 to 100) from either source. Every public figure carries its `source` and `date`.
 - `own`: `null` (never benchmarked), `{ skipped: "not picked", date }`, or a result (section 19).
 - `access` is free text, empty unless set by hand. `notes` starts with `first seen <date>`.
 
@@ -643,7 +644,7 @@ discovery reads files and sends at most one tiny request per model.
 old, or when a catalog entry has no `public` value (a new model). Each source is fetched once per
 refresh, outside the catalog lock, with a 15 s timeout. It prints `matched:`, `unmatched:` and
 `source:` lines; warnings go to stderr as `Warning: <text>`.
-- **Artificial Analysis:** `GET https://artificialanalysis.ai/api/v2/data/llms/models` with header `x-api-key`. The key is `ORCHESTRA_AA_KEY` or `artificialAnalysisKey`; without one the source is skipped with the warning `no Artificial Analysis key`. Fields: `evaluations.artificial_analysis_coding_index` → `codingIndex`, `evaluations.livecodebench` → `livecodebench`, `median_output_tokens_per_second` → `outputTokensPerSecond`, `pricing.price_1m_input_tokens` and `price_1m_output_tokens` → `price`. The free tier allows 1000 requests a day; one refresh uses one. **Attribution is required**: the README and the web page link https://artificialanalysis.ai.
+- **Artificial Analysis:** `GET https://artificialanalysis.ai/api/v2/data/llms/models` with header `x-api-key`. The key is `ORCHESTRA_AA_KEY` or `artificialAnalysisKey`; without one the source is skipped with the warning `no Artificial Analysis key`. Fields: `evaluations.artificial_analysis_coding_index` → `codingIndex`, `evaluations.livecodebench` → `livecodebench`, `median_output_tokens_per_second` → `outputTokensPerSecond`, `pricing.price_1m_input_tokens` and `price_1m_output_tokens` → `price`. A per-evaluation value of 1 or less is a fraction and is stored ×100 (`0.717` becomes 71.7), so `livecodebench` is a percentage from both sources; the coding index is already 0 to 100. A name loses one trailing parenthesized qualifier before matching (`GPT-5 (high)` becomes `GPT-5`) and is also tried against the `slug`; of several rows that map to the same model, the one with the highest coding index wins. No live response has been recorded yet: the parser has only run against a synthetic fixture. The free tier allows 1000 requests a day; one refresh uses one. **Attribution is required**: the README and the web page link https://artificialanalysis.ai.
 - **BenchLM:** the tables "SWE-bench Verified", "Terminal-Bench 2.0" and "LiveCodeBench" in the README of the mirror `leoncuhk/awesome-llm-bench` (`https://raw.githubusercontent.com/leoncuhk/awesome-llm-bench/main/README.md`), no key. Fields `swebench`, `terminalbench` and `livecodebench`, in percent, source `benchlm.ai`. SWE-bench and Terminal-Bench are required for a valid response; a missing or malformed LiveCodeBench table is skipped. It fills models Artificial Analysis does not cover and is the only source without a key, but the mirror lists only the top 10 models per benchmark. In a live run it held no coding score for any discovered model, so the free Artificial Analysis key and the own benchmark (section 19) are what give routing its evidence. A row name loses one trailing parenthesized qualifier before matching (`GPT-6.1 Sol (Max)` becomes `GPT-6.1 Sol`; a name that is only brackets stays unmatched), and of several rows that map to the same model and metric the highest score is kept.
 - Where both sources know a model, Artificial Analysis wins and BenchLM adds nothing.
 - **Matching.** Public names and catalog names are lowercased, a leading vendor or executor prefix is removed, and spaces and dots become `-`. A public name matches an entry only when it equals the `id`, `model` or `resolved` of exactly one entry; otherwise `data/model-aliases.json` is consulted. There is no fuzzy matching. An unmatched entry gets `{ source: null, note: "no public data" }`.
@@ -652,11 +653,13 @@ refresh, outside the catalog lock, with a 15 s timeout. It prints `matched:`, `u
 `data/model-aliases.json`:
 ```json
 { "aliases": { "sonnet-5-5": "claude-sonnet-5-5" },
+  "modelCostClasses": { "claude:haiku": "$", "claude:sonnet": "$$", "claude:fable": "$$$" },
   "providerCostClasses": { "claude": "$$", "codex": "$$$", "gemini": "$", "kimi": "$$" } }
 ```
-`aliases` maps a public name to a catalog name (used by `benchmarks`). `providerCostClasses` is
-the cost class of a provider whose model has no price (section 20). Both are read lazily, and a
-missing or malformed file counts as empty.
+`aliases` maps a public name to a catalog name (used by `benchmarks`). `modelCostClasses` and
+`providerCostClasses` give the cost class of a model that has no price (section 20): the model's
+entry is checked first, then its provider's. All three are read lazily, and a missing or malformed
+file counts as empty.
 
 ## 19. Own benchmark (`lib/bench.mjs`, `bench/`)
 
@@ -668,11 +671,12 @@ model has `byType.refactor.total` 2. `search` has no fixture: it relies on publi
 
 **A task.** Copy `repo/` into a fresh temporary folder, run `git init`, run the model there with
 the brief on stdin, run `check.mjs` (10 s), delete the folder. The score of a fixture is
-`{ passed: 0|1, total: 1, tokens, seconds }`.
+`{ passed: 0|1, total: 1, tokens, seconds }`. The folder is named `orchestra-bench-*`; sessions run
+in it are hidden from the web graph.
 - Codex: `node scripts/codex-task.mjs --cwd <dir> --model <m> [--effort <e>] --write`; tokens from the footer line.
 - Claude: `claude -p --model <alias> --output-format json --permission-mode acceptEdits --allowedTools "Read Edit Write Glob Grep Bash(node:*)"` (headless edits are denied without the permission flags); tokens are input, cache-creation and output tokens from the JSON `usage`.
 - Gemini and Kimi do not run. Only entries with `available.ok` run.
-- A runner error stops that model's run and is not scored as a model failure: the result is partial with the reason `runner error: <message>`.
+- A runner error stops that model's run and is not scored as a model failure: the result is partial with the reason `runner error: <message>`. A `check.mjs` killed by its 10 s limit is a runner error too (`runner error: check timed out`), not a failure.
 
 **Limits.** At most 150000 tokens per model run, checked between tasks, so one task can overshoot;
 `overCap` is `true` when the total went over. Each task has a 10-minute timeout. Fixtures run in
@@ -688,7 +692,7 @@ error spent tokens; they count toward the cap but belong to no fixture.
 ```
 models.mjs bench --estimate         one line per available Claude and Codex model: "<id>: 150000 tokens per model (budget estimate)"
 models.mjs bench --models a,b       run the named models now; a bare name, or provider:model when the name is ambiguous
-models.mjs bench --skip a,b         own = { skipped: "not picked", date } when own is null or already skipped; an entry with results is kept
+models.mjs bench --skip a,b         own = { skipped: "not picked", date } unless the entry already has per-type results (`byType` not empty), which are kept; any other entry, a partial result after a runner error included, becomes skipped
 models.mjs bench --new              automatic run, see below
 ```
 `--skip` and `--models` may be combined, but a model cannot be in both. `--estimate` takes no
@@ -715,7 +719,7 @@ the background. The skip list is written before the first run. `--models` is lef
 was picked and `--skip` when everything was; an empty list is an error. When nothing was picked,
 `bench --skip <all>` runs alone, in the foreground, and starts no run. When the estimate lists no
 model there is nothing to run or skip, and no call is made. A model in `<the rest>` that already
-has results is kept by `--skip`. After the call ends, setup sets `benchAuto: true`. The first
+has per-type results is kept by `--skip`; one with only a runner error is marked skipped. After the call ends, setup sets `benchAuto: true`. The first
 benchmark therefore runs only with consent and after the estimate.
 
 ## 20. Routing (`lib/route.mjs`, `models.mjs brief`, board attempts)
@@ -732,7 +736,8 @@ filtered by provider, so they are never ranked or listed. A candidate has *evide
 when it has a public value on the ladder's primary metric, or pooled own and history n of at
 least 1 for that type. Only candidates with evidence take part in rungs, the best score and the
 85% bar; the others are *untested* for that type (`untested(type, catalog, limits, history)` in
-`lib/route.mjs` returns their ids). The primary metric and the neutral prior are still computed
+`lib/route.mjs` returns their ids), except a model the user skipped (`own.skipped`), which is
+never listed as untested. The primary metric and the neutral prior are still computed
 over all candidates, tested or not.
 
 **Score** (0 to 100, per model and task type):
@@ -747,16 +752,18 @@ on the task was accepted. Models are keyed like catalog ids; legacy executors `s
 
 **Cost class** (`$` to `$$$$`). The Artificial Analysis price blended 3:1 input to output,
 `(3 * input + output) / 4` USD per 1M tokens: up to 1 is `$`, up to 5 `$$`, up to 15 `$$$`, above
-that `$$$$`. A model without a price takes the provider default from `providerCostClasses`
-(claude `$$`, codex `$$$`, gemini `$`, kimi `$$`). Without an Artificial Analysis key no model has
-a price, so the class is always the provider's.
+that `$$$$`. A model without a price takes its class from `modelCostClasses` (`claude:haiku` `$`,
+`claude:sonnet` `$$`, `claude:fable` `$$$`) and, when it has no entry there, the provider default
+from `providerCostClasses` (claude `$$`, codex `$$$`, gemini `$`, kimi `$$`). Without an
+Artificial Analysis key no model has a price, so the class always comes from those two tables.
 
 **Ladder.** Candidates are ordered cheapest first: fewer `$`, then lower price (a representative
 price per class when there is none), then higher score, then id. A provider above 90% of any limit
 window is `low limit`: still listed, skipped for rung 1.
 - Rung 1: the cheapest candidate that scores at least 85% of the best score and is not `low limit`.
-- Rung 2: the next candidate that scores at least 5 points higher than rung 1, or sits in a higher cost class (any higher class) and scores higher.
-- Rung 3: the best-scoring candidate. A rung is left out when no candidate fits it or when the model is already on an earlier rung.
+- Rung 2: the next candidate that scores at least 5 points higher than rung 1, or sits in a higher cost class (any higher class) and scores at least as much as rung 1.
+- Rung 3: the best-scoring candidate. When scores tie, the best is the candidate in the higher cost class, then the one with the higher prior, then the one with the lower id. A rung is left out when no candidate fits it or when the model is already on an earlier rung.
+- Three equal own results (say 1/1 for `claude:haiku`, `claude:sonnet` and a Codex model) therefore give three rungs, cheapest first.
 - Effort: rung 1 medium, rungs 2 and 3 high, each the nearest level the model supports. When rung 1 is also the best candidate, it runs at `high`. Claude models have no effort.
 - Opus starts a subtask at rung 1 unless it is risky. Escalation climbs the rungs. The last step re-runs rung 3 at its top supported effort: the last value of that entry's `efforts` array in `models.json`. A Claude entry has no efforts, so for it the last step is a plain re-run.
 
@@ -779,7 +786,7 @@ up.
 A type with no candidate that has evidence prints `<type> no evidence yet`. With no eligible model
 at all it prints `<type> no available models`. After the type lines and before `Limits:`, one line
 lists the models that are untested for every type shown, each once, with the command that would
-test them, and is left out when empty:
+test them, and is left out when empty. Skipped models (`own.skipped`) never appear on it:
 ```
 bug no evidence yet
 logic no evidence yet
@@ -806,7 +813,7 @@ without any result.
   ] }
 ```
 - `board set <id> running` opens attempt `n` (the count so far plus one) with the task's current provider, model and effort, unless one is already open. `done` closes it as `accepted`, `rework` as `rework`, `failed` as `failed`.
-- `tokens` of an attempt: the spent tokens of all agents and jobs carrying the task id now, minus the tokens of earlier attempts; `null` when an earlier attempt is `null` or nothing is linked to the task.
+- `tokens` of an attempt: the spent tokens of all agents and jobs carrying the task id now, minus the tokens of earlier attempts; `null` when an earlier attempt is `null` or nothing is linked to the task, and a negative difference is stored as `null`. `board set` computes the tokens before it re-reads and writes the board, so concurrent board commands do not lose updates.
 - `board exec <id> <provider> --model <m> --effort <e>` changes the task's current hand. Run it after `set rework` and before `set running`, so the failed attempt keeps its own model. It sets `model` and `effort` to null when they are omitted.
 - Snapshot additions (section 7): `Task.type`, `Task.model`, `Task.effort`, `Task.attemptCount` (number of attempts) and `Task.attemptList` (the records). A job's `Agent.executor` is its `provider`.
 - The status line and the ASCII board show the open attempt's model and effort in place of the executor name (glossary, section 16).
@@ -819,5 +826,6 @@ without any result.
 - Every agent brief lists the files that may change and a checkable done criterion. A hand that finds a problem outside its scope reports it. The review checks scope first and treats extra changes as rework.
 - Sub-agents only when the agent brief allows them and names the sub-agent's model and effort: the cheapest Codex line of `models.mjs brief` for the type of the hard part. With no Codex line, no sub-agent. A hand never picks a model. A sub-agent is always Codex, one level deep.
 - Escalation: a rung gets two attempts, the first and one rework. Then the next rung; after rung 3, rung 3 once more at its top supported effort (the last value of the entry's `efforts` array; a plain re-run for a Claude entry); then `failed`. `board exec` takes `--effort` for Codex hands only.
-- A type with `no evidence yet`: Opus picks the hand itself from the `untested:` line, model and effort by its own judgment, and writes `untested: <reason>` in the plan's why column. At the end of the report it suggests `/orchestra:setup` or the `bench --models` command from that line. Board attempts of that hand become history for the next run.
+- A type with `no evidence yet`: Opus picks the hand itself from the `untested:` line (skipped models never appear there; with no line, Opus picks among the models other types rank), model and effort by its own judgment, and writes `untested: <reason>` in the plan's why column. At the end of the report it suggests `/orchestra:setup` or the `bench --models` command from that line. Board attempts of that hand become history for the next run.
+- Nothing ranked: when `brief` ranks no model for any type and prints no `untested:` line (every model skipped, no Artificial Analysis key), Opus chooses by its own judgment among the available hands in `models.json` (`available.ok`, provider `codex` or `claude`, never `opus`, `fable` only with `allowFable`), writes `no evidence` in the why column and ends the report by suggesting the Artificial Analysis key or `bench --models`.
 - Last command of a run, after `board finish`: `models.mjs bench --new` in the background. It does nothing without `benchAuto` or new models.

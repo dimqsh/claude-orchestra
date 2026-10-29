@@ -1390,7 +1390,6 @@ const rnd = (a, b) => a + Math.floor(Math.random() * (b - a + 1));
 const POOL = {
   codex: ['editing cli.py', 'Bash pytest -q', 'thinking', 'editing export.py'],
   sonnet: ['Edit cli.py', 'Bash pytest -q', 'Read export.py', 'Grep sort_key'],
-  opus: ['Read export.py', 'Grep dependsOn', 'Read diff'],
   haiku: ['Grep round(', 'Read billing.py'],
 };
 const NOTE_POOL = [
@@ -1398,12 +1397,12 @@ const NOTE_POOL = [
   ['fact', 'export is called from cli.py: cmd_export', 'sonnet #2'], ['gotcha', 'an empty CSV raises IndexError in the parser', 'codex #2.1'],
   ['command', 'pytest -k export -q', 'sonnet #4'], ['decision', 'take column names from the file header', 'opus'],
 ];
-const MODEL = { codex: 'gpt-6.1-sol', sonnet: 'claude-sonnet-5-5', opus: 'claude-opus-4-7', haiku: 'claude-haiku-4-5', other: null };
+const MODEL = { codex: 'gpt-6.1-sol', sonnet: 'claude-sonnet-5-5', haiku: 'claude-haiku-4-5', other: null };
 const spentOf = (t) => t.input + t.cacheWrite + t.output;
 
 function stress(base, sCount, aCount, opts = {}) {
   const names = ['acme-shop', 'billing-api', 'tulpar-web', 'mangystau-app', 'sunkar-bot', 'orda-ui'];
-  const exs = ['codex', 'sonnet', 'opus', 'codex', 'sonnet', 'haiku'];
+  const exs = ['codex', 'sonnet', 'haiku', 'codex', 'sonnet', 'haiku'];
   const sts = ['running', 'done', 'queued', 'review', 'rework', 'failed', 'done', 'running', 'queued', 'done', 'running', 'done'];
   const sessions = [];
   for (let i = 0; i < sCount; i++) {
@@ -1509,9 +1508,9 @@ async function startMock() {
       const opts = [];
       for (const t of T) {
         if (t.status === 'review') opts.push(() => { t.status = Math.random() < 0.2 ? 'rework' : 'done'; if (t.status === 'rework') t.note = 'needs changes'; else t.merged = true; closeAttempt(s, t, t.status === 'rework' ? 'rework' : 'accepted'); finish(s, t); });
-        else if (t.status === 'running') opts.push(() => { finish(s, t); t.status = t.executor === 'opus' ? 'done' : (Math.random() < 0.5 ? 'review' : 'done'); if (t.status === 'done') { t.merged = true; closeAttempt(s, t, 'accepted'); } });
+        else if (t.status === 'running') opts.push(() => { finish(s, t); t.status = Math.random() < 0.5 ? 'review' : 'done'; if (t.status === 'done') { t.merged = true; closeAttempt(s, t, 'accepted'); } });
         else if (t.status === 'rework') opts.push(() => {
-          if (t.executor === 'sonnet' && Math.random() < 0.6) { t.executor = 'opus'; t.model = 'opus'; t.effort = 'high'; }   /* escalate to a stronger model */
+          if (t.executor === 'sonnet' && Math.random() < 0.6) { t.executor = 'codex'; t.model = 'gpt-6.1-sol'; t.effort = 'high'; }   /* escalate to a stronger hand: Codex, never Opus */
           t.status = 'running'; spawn(s, t);
         });
         else if (t.status === 'queued' && (t.dependsOn || []).every(done)) opts.push(() => { t.status = 'running'; spawn(s, t); });

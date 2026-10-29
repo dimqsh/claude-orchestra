@@ -14,7 +14,7 @@
       "name": "orchestra",
       "source": "./plugins/orchestra",
       "description": "Opus plans and reviews, and each subtask goes to the cheapest model that scores well enough for its type. Live board in the status line, web graph, shared project memory, one git worktree per subtask.",
-      "version": "0.2.0"
+      "version": "0.3.0"
     }
   ]
 }

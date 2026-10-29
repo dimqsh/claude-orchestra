@@ -56,7 +56,7 @@ The orchestrate skill picks a model per subtask from a catalog. This step builds
    node "${CLAUDE_PLUGIN_ROOT}/scripts/models.mjs" discover --force
    ```
    It prints `added:` and `unavailable:`. Report both in one line each. Gemini is discovered but has no runner yet, and on some accounts the Gemini CLI also rejects the probe (`IneligibleTierError`, asks to migrate to Antigravity), so it shows as unavailable with that error. Kimi shows `disabled: no sandbox`. Only providers with a runner, Claude and Codex, are ranked or benchmarked; Gemini and Kimi get no task, so do not try to fix them. Fable stays off unless the user sets `allowFable: true` in config.json, because it costs more; say so once.
-2. Ask for the optional Artificial Analysis key: "Routing needs evidence for each model and task type. The free Artificial Analysis key (https://artificialanalysis.ai) and the plugin's own benchmark are what provide it. Without a key only the BenchLM mirror loads, which lists only the top 10 models per benchmark and often none of yours, and every cost class falls back to the provider's default. Paste a key, or say skip." On a key:
+2. Ask for the optional Artificial Analysis key: "Routing needs evidence for each model and task type. The free Artificial Analysis key (https://artificialanalysis.ai) and the plugin's own benchmark are what provide it. Without a key only the BenchLM mirror loads, which lists only the top 10 models per benchmark and often none of yours, and every cost class falls back to a built-in default for the model or provider. Paste a key, or say skip." On a key:
    - Read `~/.claude/orchestra/config.json` (`$ORCHESTRA_HOME/config.json` when that variable is set), add `"artificialAnalysisKey": "<key>"`, keep every other key, write it back and run `chmod 600` on it. Do not print the key again.
    - The environment variable `ORCHESTRA_AA_KEY` also works and wins over the file.
 3. Load the public data and show the result:
@@ -69,7 +69,7 @@ The orchestrate skill picks a model per subtask from a catalog. This step builds
    node "${CLAUDE_PLUGIN_ROOT}/scripts/models.mjs" bench --estimate
    ```
    One line per available Claude and Codex model. Each run is six small tasks capped at 150000 tokens per model (the cap is checked between tasks, so one task can overshoot it). Show the list and ask which models to benchmark now. None is fine.
-5. Start the benchmark in ONE call, so the skip list cannot be lost. `<picked>` and `<the rest>` are comma-separated lists from the estimate; use `provider:model` when a bare name is ambiguous. A model that already has benchmark results is kept even if it is in `<the rest>`; the output says `<id>: kept (already benchmarked)`.
+5. Start the benchmark in ONE call, so the skip list cannot be lost. `<picked>` and `<the rest>` are comma-separated lists from the estimate; use `provider:model` when a bare name is ambiguous. A model that already has per-type results is kept even if it is in `<the rest>`; the output says `<id>: kept (already benchmarked)`. A model whose earlier run ended in a runner error has no results, so it is marked skipped.
    - Some picked and some not: one call with `run_in_background: true` (it takes minutes and runs one model at a time). The skip list is written first, then the picked models run:
      ```
      node "${CLAUDE_PLUGIN_ROOT}/scripts/models.mjs" bench --models <picked> --skip <the rest>
@@ -84,7 +84,7 @@ The orchestrate skill picks a model per subtask from a catalog. This step builds
    ```
    node "${CLAUDE_PLUGIN_ROOT}/scripts/models.mjs" brief
    ```
-   A type that prints `no evidence yet`, with an `untested:` line, has no key data and no benchmark result for any model. Say so: until a key is set or a benchmark has run, Opus picks hands for that type by its own judgment and marks them untested in the plan.
+   A type that prints `no evidence yet`, with an `untested:` line, has no key data and no benchmark result for any model. Say so: until a key is set or a benchmark has run, Opus picks hands for that type by its own judgment and marks them untested in the plan. Models the user skipped never appear on the `untested:` line.
 
 ## 6. Web graph
 
