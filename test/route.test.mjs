@@ -178,7 +178,7 @@ test('tied own 1/1 results without public data give three rungs cheapest first',
   assert.doesNotMatch(out.stdout, /^untested:/m);
 });
 
-test('best breaks score ties by higher cost class, then higher prior, then id', t => {
+test('best breaks score ties by higher cost class, then higher prior, then catalog order', t => {
   const f = fixture(t);
   const cheap = entry('codex', 'cheap', 80, 0.5);
   const a = entry('codex', 'a', 60, 2, { own: { byType: { bug: { passed: 0, total: 2 } } } });
@@ -186,7 +186,21 @@ test('best breaks score ties by higher cost class, then higher prior, then id', 
   cheap.own = { byType: { bug: { passed: 0, total: 4 } } };
   const c = { ...b, id: 'codex:c', model: 'c' };
   const rows = f.run(`r.ladder('bug', ${JSON.stringify(catalog(c, a, b, cheap))}, {}, {})`);
-  assert.deepEqual(rows.map(row => [row.rung, row.id, row.score.value]), [[1, cheap.id, 40], [2, a.id, 40], [3, b.id, 40]]);
+  assert.deepEqual(rows.map(row => [row.rung, row.id, row.score.value]), [[1, cheap.id, 40], [2, a.id, 40], [3, c.id, 40]]);
+});
+
+test('same-class own 1/1 ties keep provider listing order for best and id order for rung 1', t => {
+  const models = ['gpt-6.1-sol', 'gpt-6-astra', 'gpt-5.6-terra', 'gpt-5.6-luna']
+    .map(model => entry('codex', model, null, null, { public: null,
+      own: { byType: { bug: { passed: 1, total: 1 } } } }));
+  const f = fixture(t);
+  for (const ordered of [models, [...models].reverse()]) {
+    const rows = f.run(`r.ladder('bug', ${JSON.stringify(catalog(...ordered))}, {}, {})`);
+    assert.equal(rows.at(-1).id, ordered[0].id);
+    assert.equal(rows.at(-1).score.value, 60);
+    assert.equal(rows[0].id, 'codex:gpt-5.6-luna');
+    assert.equal(rows[0].rung, 1);
+  }
 });
 
 test('fable never appears unless allowFable; opus and unavailable models never appear', t => {
@@ -214,7 +228,9 @@ test('empty and single-candidate ladders have no duplicate padding; ties are det
   assert.equal(rows.length, 1);
   assert.equal(rows[0].effort, null);
   const b = entry('codex', 'b', 80, 2);
-  assert.equal(f.run(`r.ladder('bug', ${JSON.stringify(catalog(b, a))}, {}, {})`)[0].id, a.id);
+  const tied = f.run(`r.ladder('bug', ${JSON.stringify(catalog(b, a))}, {}, {})`);
+  assert.equal(tied[0].id, a.id);
+  assert.equal(tied.at(-1).id, b.id);
 });
 
 test('brief output is at most 20 lines, contains evidence and one limits line, and honors --types', t => {
@@ -511,6 +527,61 @@ test('brief with no evidence prints six type messages, one untested line and lim
   assert.match(lines[7], /^Limits:/);
   assert.equal(lines.length, 8);
   assert.doesNotMatch(out.stdout, /neutral prior|no available models|gemini:/);
+});
+
+test('brief with all three available models skipped prints no evidence yet without an untested line', t => {
+  const input = catalog(...[['claude', 'haiku'], ['claude', 'sonnet'], ['codex', 'gpt-6.1-sol']]
+    .map(([provider, model]) => entry(provider, model, null, null, { public: null,
+      own: { skipped: 'not picked', date } })));
+  const f = fixture(t, input), out = f.brief();
+  assert.equal(out.status, 0, out.stderr); assert.equal(out.stderr, '');
+  const lines = out.stdout.trimEnd().split('\n');
+  assert.deepEqual(lines.slice(0, 6), ['bug', 'logic', 'refactor', 'tests', 'docs', 'search'].map(type => `${type} no evidence yet`));
+  assert.equal(lines.length, 7);
+  assert.match(lines[6], /^Limits:/);
+  assert.doesNotMatch(out.stdout, /no available models|^untested:/m);
+});
+
+test('brief with only excluded models prints no available models', t => {
+  const input = catalog(entry('claude', 'opus', null, null, { public: null }),
+    entry('claude', 'fable', null, null, { public: null }),
+    entry('kimi', 'default', null, null, { public: null }),
+    entry('gemini', 'default', null, null, { public: null }),
+    entry('codex', 'offline', null, null, { public: null, available: { ok: false } }));
+  const out = fixture(t, input).brief();
+  assert.equal(out.status, 0, out.stderr); assert.equal(out.stderr, '');
+  assert.deepEqual(out.stdout.trimEnd().split('\n').slice(0, 6),
+    ['bug', 'logic', 'refactor', 'tests', 'docs', 'search'].map(type => `${type} no available models`));
+  assert.doesNotMatch(out.stdout, /^untested:/m);
+});
+
+test('board set reports the friendly error when its board disappears before the synchronous re-read', t => {
+  const f = fixture(t);
+  const boardUrl = new URL('../plugins/orchestra/scripts/board.mjs', import.meta.url).href;
+  const pathsUrl = new URL('../plugins/orchestra/lib/paths.mjs', import.meta.url).href;
+  const out = f.child(`
+    import fs from 'node:fs';
+    import { dirname } from 'node:path';
+    import { fileURLToPath } from 'node:url';
+    import { syncBuiltinESMExports } from 'node:module';
+    import { boardPath } from ${JSON.stringify(pathsUrl)};
+    const path = boardPath(${JSON.stringify(f.root)});
+    fs.mkdirSync(dirname(path), { recursive: true });
+    fs.writeFileSync(path, JSON.stringify({ tasks: [{ id: '1', executor: 'codex', attempts: [] }] }));
+    const read = fs.readFileSync;
+    // Remove the actual file at the re-read boundary, after the async read succeeded.
+    fs.readFileSync = (file, ...args) => {
+      if (file === path) fs.unlinkSync(path);
+      return read(file, ...args);
+    };
+    syncBuiltinESMExports();
+    process.argv = [process.execPath, fileURLToPath(${JSON.stringify(boardUrl)}),
+      'set', '1', 'running', '--cwd', ${JSON.stringify(f.root)}];
+    await import(${JSON.stringify(boardUrl)});
+  `);
+  assert.equal(out.status, 1);
+  assert.equal(out.stdout, '');
+  assert.equal(out.stderr, 'Error: Board not found: run init\n');
 });
 
 test('brief lists only models untested for every shown type and stays within 20 lines', t => {
