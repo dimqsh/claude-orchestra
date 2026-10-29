@@ -1,0 +1,11 @@
+import assert from 'node:assert/strict';
+import { pathToFileURL } from 'node:url';
+import { join } from 'node:path';
+const root = process.argv[2];
+const { parseIds } = await import(pathToFileURL(join(root, 'parse.mjs')));
+const { report } = await import(pathToFileURL(join(root, 'report.mjs')));
+const text = ' 2,1,2,, 03, 0,-1,1.5,x,1e2,0x10,9007199254740992 ';
+assert.deepEqual(parseIds(text), [2, 1, 3]);
+assert.deepEqual(report(text), { count: 3, ids: [2, 1, 3] });
+assert.deepEqual(report(''), { count: 0, ids: [] });
+assert.deepEqual(parseIds('5, 0005, 9007199254740991'), [5, 9007199254740991]);

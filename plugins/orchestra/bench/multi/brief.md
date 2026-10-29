@@ -1,0 +1,2 @@
+#B-multi Parse IDs and extend the report
+Update parse.mjs and report.mjs. parseIds(text) must trim comma-separated fields, ignore empty fields and invalid values, accept only positive safe integers written as decimal digits, remove duplicates and preserve first-seen order. report(text) must return { count, ids } using parseIds. Empty text gives { count: 0, ids: [] }. Preserve both exported function names.

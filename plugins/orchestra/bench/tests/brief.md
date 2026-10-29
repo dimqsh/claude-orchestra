@@ -1,0 +1,2 @@
+#B-tests Cover clamp edge cases
+Add clamp.test.mjs using node:test and node:assert/strict for clamp.mjs. Cover in-range values, values below and above the bounds, equal bounds, negative bounds and reversed bounds (RangeError). Run with node --test clamp.test.mjs. Keep clamp.mjs unchanged. Tests must catch implementations that always return min, always return max, never clamp, or omit the reversed-bounds error.
