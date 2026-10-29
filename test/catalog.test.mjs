@@ -85,6 +85,57 @@ test('readers never see partial JSON', () => {
   assert.ok(out.reads > 0);
 });
 
+test('an async mutator throws a TypeError, writes nothing and releases the lock', () => {
+  const home = tempHome();
+  const out = inChild(home, `
+    import { readFileSync, existsSync } from 'node:fs';
+    await catalog.updateCatalog(c => { c.models['codex:a'] = { id: 'codex:a' }; });
+    const file = paths.catalogPath();
+    const before = readFileSync(file, 'utf8');
+    const attempts = [
+      () => catalog.updateCatalog(async c => { c.models['codex:b'] = { id: 'codex:b' }; }),
+      () => catalog.updateCatalog(async () => { throw new Error('late failure'); }),
+      () => catalog.updateCatalog(c => ({ then() {} })),
+    ];
+    const errors = [];
+    for (const attempt of attempts) {
+      try { await attempt(); errors.push(null); } catch (error) { errors.push({ name: error.name, message: error.message }); }
+    }
+    await new Promise(resolve => setTimeout(resolve, 20)); // lets a late rejection surface as unhandled
+    const unchanged = readFileSync(file, 'utf8') === before;
+    const lockLeft = existsSync(file + '.lock');
+    await catalog.updateCatalog(c => { c.models['codex:c'] = { id: 'codex:c' }; });
+    console.log(JSON.stringify({ errors, unchanged, lockLeft, ids: Object.keys((await catalog.readCatalog()).models) }));`);
+  assert.equal(out.errors.length, 3);
+  for (const error of out.errors) {
+    assert.equal(error?.name, 'TypeError');
+    assert.match(error.message, /must be synchronous/);
+    assert.match(error.message, /outside|before calling updateCatalog/);
+  }
+  assert.equal(out.unchanged, true, 'models.json is untouched by the rejected updates');
+  assert.equal(out.lockLeft, false);
+  assert.deepEqual(out.ids, ['codex:a', 'codex:c'], 'a later update works and does not see the rejected changes');
+});
+
+test('releasing never removes a lock whose token is not its own', () => {
+  const home = tempHome();
+  const out = inChild(home, `
+    import { readFileSync, existsSync, writeFileSync } from 'node:fs';
+    const lock = paths.catalogPath() + '.lock';
+    const own = {};
+    // Mid-update another process takes the lock over (as it would after a stale timeout).
+    await catalog.updateCatalog(c => {
+      own.token = readFileSync(lock, 'utf8');
+      writeFileSync(lock, 'foreign-token');
+      c.models['codex:a'] = { id: 'codex:a' };
+    });
+    console.log(JSON.stringify({ ownToken: own.token, lockExists: existsSync(lock),
+      lock: existsSync(lock) ? readFileSync(lock, 'utf8') : null }));`);
+  assert.match(out.ownToken, /^[0-9a-f-]{36}$/, 'the lock file holds a random token while it is held');
+  assert.equal(out.lockExists, true, 'the foreign owner\'s lock is left in place');
+  assert.equal(out.lock, 'foreign-token');
+});
+
 test('a stale lock file from a crashed process does not block updates', () => {
   const home = tempHome();
   const lock = join(home, 'models.json.lock');
