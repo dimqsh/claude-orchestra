@@ -22,7 +22,7 @@ function primaryMetric(entries) {
 
 function prior(entry, { metric: [key, label], neutral }) {
   const data = entry.public;
-  if (!finite(data?.[key])) return { value: neutral, evidence: `no public data · neutral prior ${neutral}` };
+  if (!finite(data?.[key])) return { value: neutral, evidence: `no public data · neutral prior ${Number(neutral.toFixed(1))}` };
   const source = data.source === 'artificialanalysis.ai' ? 'AA' : data.source === 'benchlm.ai' ? 'BenchLM' : data.source || 'public';
   return { value: percent(data[key]), evidence: `${source} ${label}${data[key]}${data.date ? ` (${data.date})` : ''}` };
 }
