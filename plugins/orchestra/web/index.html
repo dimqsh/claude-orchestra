@@ -534,8 +534,13 @@ function agentItem(a) {
     type: null, modelLabel: modelLine(a.model, null), effort: null, attemptList: null,
     tokens: tokOf(a.tokens), agents: [a], model: a.model, activity: a.status === 'running' ? (a.activity || '') : '', note: '', deps: [] };
 }
-/* "sonnet" and "claude-sonnet-5-5" name the same model; "opus" and "claude-haiku-4-5" do not */
-const sameModel = (a, b) => { const x = String(a).toLowerCase(), y = String(b).toLowerCase(); return x === y || x.includes(y) || y.includes(x); };
+/* Exact match after normalising (vendor prefix and -YYYYMMDD date stripped, lower case). The one loosening: a bare
+   Claude family alias equals any model of that family, so "sonnet" = "claude-sonnet-5-5" but "sonnet-4" != "sonnet-4-5"
+   and "gpt-6.1" != "gpt-6.1-sol". */
+const sameModel = (a, b) => {
+  const x = shortModel(String(a).toLowerCase()), y = shortModel(String(b).toLowerCase());
+  return x === y || FAMILIES.some((f) => (x === f && y.startsWith(f + '-')) || (y === f && x.startsWith(f + '-')));
+};
 function taskItem(t, agents) {
   const run = [...agents].reverse().find((a) => a.status === 'running');
   const last = agents[agents.length - 1];
@@ -1481,7 +1486,7 @@ async function startMock() {
 
   const spawn = (s, t) => {
     const ex = execKey(t.executor, t.model);
-    s.agents.unshift({ id: 'mock-' + (counter++), kind: ex === 'codex' ? 'codex' : 'claude', type: ex === 'codex' ? 'codex' : 'general-purpose', executor: EXEC_NAME[t.executor] || t.executor === 'claude' ? ex : t.executor, model: MODEL[ex] || t.model || null,
+    s.agents.unshift({ id: 'mock-' + (counter++), kind: ex === 'codex' ? 'codex' : 'claude', type: ex === 'codex' ? 'codex' : 'general-purpose', executor: (EXEC_NAME[t.executor] || t.executor === 'claude') ? ex : t.executor, model: MODEL[ex] || t.model || null,
       description: '#' + t.id + ' ' + t.title, taskId: t.id, status: 'running', startedAt: new Date().toISOString(), endedAt: null, activity: (POOL[ex] || POOL.sonnet)[0],
       tokens: zeroTok() });
     t.attemptCount = (t.attemptCount || 0) + 1;
