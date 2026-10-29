@@ -26,6 +26,9 @@ export const projectDir = cwd => join(claudeConfigDir, 'projects', projectSlug(c
 export const boardPath = cwd => join(orchestraHome, 'boards', `${projectSlug(canonicalPath(cwd))}.json`);
 export const cacheDir = () => join(orchestraHome, 'cache');
 export const codexJobsDir = () => join(orchestraHome, 'codex-jobs');
+export const catalogPath = () => join(orchestraHome, 'models.json');
+export const limitsPath = () => join(orchestraHome, 'limits.json');
+export const jobsDir = () => join(orchestraHome, 'jobs');
 export const codexStateRoots = () => [join(claudeConfigDir, 'plugins/data/codex-openai-codex/state'), join(tmpdir(), 'codex-companion')];
 export function orchestraConfig() {
   try {
