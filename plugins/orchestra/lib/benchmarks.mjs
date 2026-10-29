@@ -59,11 +59,13 @@ function parseAA(body, date) {
   });
 }
 
-function parseBenchLM(text, date) {
+export function parseBenchLM(text, date) {
   const rows = [];
-  for (const [heading, metric] of [['SWE-bench Verified', 'swebench'], ['Terminal-Bench 2.0', 'terminalbench']]) {
+  for (const [heading, metric, optional] of [['SWE-bench Verified', 'swebench'],
+    ['Terminal-Bench 2.0', 'terminalbench'], ['LiveCodeBench', 'livecodebench', true]]) {
     const section = text.split(`### ${heading}\n`)[1]?.split(/^#{1,3} /m)[0];
     if (!section || !/\|\s*Rank\s*\|\s*Model\s*\|\s*Provider\s*\|\s*License\s*\|\s*Score\s*\|/.test(section)) {
+      if (optional) continue;
       throw new Error('invalid response');
     }
     let count = 0;
@@ -71,12 +73,13 @@ function parseBenchLM(text, date) {
       const cells = line.split('|').slice(1, -1).map(cell => cell.trim());
       if (cells.length !== 5 || !/^\d+$/.test(cells[0])) continue;
       const score = /^(\d+(?:\.\d+)?)%$/.exec(cells[4]);
-      const name = /^\[(.*)\]\([^)]*\)$/.exec(cells[1])?.[1] || cells[1];
+      const name = (/^\[(.*)\]\([^)]*\)$/.exec(cells[1])?.[1] || cells[1])
+        .replace(/\s*\([^()]*\)$/, '').trim();
       if (!score || !name || Number(score[1]) > 100) continue;
       rows.push({ name, creator: cells[2], data: { source: BENCHLM, date, [metric]: Number(score[1]) } });
       count++;
     }
-    if (!count) throw new Error('invalid response');
+    if (!count && !optional) throw new Error('invalid response');
   }
   return rows;
 }
@@ -119,7 +122,11 @@ export async function refreshBenchmarks({ force = false, fetch = globalThis.fetc
       if (!id) continue;
       const previous = updates.get(id);
       if (!previous) updates.set(id, { ...row.data });
-      else if (previous.source === BENCHLM && row.data.source === BENCHLM) Object.assign(previous, row.data);
+      else if (previous.source === BENCHLM && row.data.source === BENCHLM) {
+        for (const metric of ['swebench', 'terminalbench', 'livecodebench']) {
+          if (number(row.data[metric])) previous[metric] = Math.max(previous[metric] ?? 0, row.data[metric]);
+        }
+      }
       // AA is loaded first and remains authoritative for every model it covers.
     }
     for (const [id, entry] of Object.entries(current.models)) {

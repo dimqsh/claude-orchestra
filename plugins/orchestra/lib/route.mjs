@@ -27,19 +27,24 @@ function prior(entry, { metric: [key, label], neutral }) {
   return { value: percent(data[key]), evidence: `${source} ${label}${data[key]}${data.date ? ` (${data.date})` : ''}` };
 }
 
+function observations(entry, type, history) {
+  const past = history?.[entry.id || entryId(entry.provider, entry.model)]?.[type];
+  const historyN = finite(past?.tasks) && finite(past?.firstTry) && past.firstTry <= 1 ? past.tasks : 0;
+  const own = entry.own?.byType?.[type];
+  const ownN = finite(own?.total) && own.total > 0 && finite(own.passed) && own.passed <= own.total ? own.total : 0;
+  return { past, historyN, own, ownN, n: ownN + historyN };
+}
+
 /**
  * Pool own passes with historical first-try successes; n observations get weight n / (n + 4).
  * At five historical tasks, history alone dominates. Missing primary-metric evidence uses
  * the candidate cohort's median, or 50 when none is known. Standalone score uses one entry.
  */
 function scoreWithPrior(entry, type, history, context) {
-  const past = history?.[entry.id || entryId(entry.provider, entry.model)]?.[type];
-  const historyN = finite(past?.tasks) && finite(past?.firstTry) && past.firstTry <= 1 ? past.tasks : 0;
+  const { past, historyN, own, ownN, n } = observations(entry, type, history);
   const historyEvidence = `history ${historyN} tasks, ${Math.round((past?.firstTry || 0) * 100)}% first try`;
   if (historyN >= 5) return { value: past.firstTry * 100, evidence: historyEvidence };
-  const pub = prior(entry, context), own = entry.own?.byType?.[type];
-  const ownN = finite(own?.total) && own.total > 0 && finite(own.passed) && own.passed <= own.total ? own.total : 0;
-  const n = ownN + historyN;
+  const pub = prior(entry, context);
   const passes = (ownN ? own.passed : 0) + (historyN ? historyN * past.firstTry : 0);
   const evidence = [ownN ? `own ${own.passed}/${own.total}` : null,
     historyN ? historyEvidence : null, pub.evidence].filter(Boolean).join(' · ');
@@ -79,17 +84,33 @@ function effort(entry, rung, onlyBest) {
     order.slice(target + 1).find(value => efforts.includes(value)) || null;
 }
 
-/** Up to three distinct entries; an already-selected top model is not repeated as padding. */
-export function ladder(type, catalog, limits, history = {}) {
+function eligibleEntries(catalog) {
   const fableAllowed = allowFable();
-  const entries = Object.values(catalog.models).filter(entry => {
+  return Object.values(catalog.models).filter(entry => {
     const identities = [entry.id, entry.model, entry.resolved].filter(Boolean).join(' ');
-    return entry.available?.ok === true && entry.provider !== 'kimi' &&
+    return entry.available?.ok === true && ['codex', 'claude'].includes(entry.provider) &&
       !/(?:^|[\s:/_-])opus(?:$|[\s:/_-])/i.test(identities) &&
       (fableAllowed || !/(?:^|[\s:/_-])fable(?:$|[\s:/_-])/i.test(identities));
   });
+}
+
+function hasEvidence(entry, type, history, context) {
+  return finite(entry.public?.[context.metric[0]]) || observations(entry, type, history).n >= 1;
+}
+
+/** Eligible model IDs without public primary-metric or measured per-type evidence. */
+export function untested(type, catalog, limits, history = {}) {
+  const entries = eligibleEntries(catalog), context = primaryMetric(entries);
+  return entries.filter(entry => !hasEvidence(entry, type, history, context))
+    .map(entry => entry.id || entryId(entry.provider, entry.model));
+}
+
+/** Up to three distinct entries with evidence; the top model is not repeated as padding. */
+export function ladder(type, catalog, limits, history = {}) {
+  const entries = eligibleEntries(catalog);
   const context = primaryMetric(entries);
-  const candidates = entries.map(entry => ({ entry, id: entry.id || entryId(entry.provider, entry.model),
+  const candidates = entries.filter(entry => hasEvidence(entry, type, history, context))
+    .map(entry => ({ entry, id: entry.id || entryId(entry.provider, entry.model),
     score: scoreWithPrior(entry, type, history, context), cost: costClass(entry),
     lowLimit: maxUsedPercent(limits, entry.provider) > 90 }));
   // Defaults have no exact price: use a representative price within their configured class.
