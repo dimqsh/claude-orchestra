@@ -59,7 +59,7 @@ const strip = text => text.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '');
 async function job(cwd, overrides = {}) {
   const value = { version: 1, id: `cx-test-${sequence++}`, label: '#1 task', cwd, model: 'gpt-test', status: 'completed', pid: process.pid,
     startedAt: '2026-10-29T01:00:02.000Z', endedAt: '2026-10-29T01:00:03.000Z', activity: 'Bash pytest -q', tokens: core.codexTokens({ input_tokens: 100, cached_input_tokens: 80, output_tokens: 5 }), ...overrides };
-  await paths.atomicJSON(join(paths.codexJobsDir(), `${value.id}.json`), value); return value;
+  await paths.atomicJSON(join(paths.jobsDir(), `${value.id}.json`), value); return value;
 }
 
 test('paths follow overrides, slug rules and realpath board identity', async () => {
@@ -181,9 +181,9 @@ test('board CLI init/add/set/exec/show/finish/json, attempts and archive use ato
   }
   board('init', 'check', '--session', 'sid'); board('add', '1', 'task', '--exec', 'codex'); board('add', '2', 'dependent', '--exec', 'sonnet', '--deps', '1');
   board('set', '1', 'running'); board('set', '1', 'running');
-  assert.equal(JSON.parse(board('json')).tasks[0].attempts, 1);
+  assert.equal(JSON.parse(board('json')).tasks[0].attempts.length, 1);
   board('set', '1', 'rework', '--note', 'fix it'); board('set', '1', 'running'); board('exec', '1', 'opus');
-  assert.equal(JSON.parse(board('json')).tasks[0].attempts, 2);
+  assert.equal(JSON.parse(board('json')).tasks[0].attempts.length, 2);
   assert.equal(JSON.parse(board('json')).tasks[0].executor, 'opus');
   assert(board('show').includes('waits on #1')); assert(!board('show').includes('\x1b'));
   assert(board('show', '--color').includes('\x1b'));
@@ -218,13 +218,13 @@ test('codex-task fake executable: arguments, event parsing, job writes, token su
   const args = JSON.parse(await readFile(env.FAKE_ARGS, 'utf8'));
   assert.deepEqual(args, ['exec', '--json', '--skip-git-repo-check', '-m', 'gpt-test', '-c', 'model_reasoning_effort=high', '-s', 'workspace-write', '-C', paths.canonicalPath(cwd), '-']);
   const [agent] = await core.collectCodexJobs(cwd); assert.equal(agent.tokens.spent, 370); assert.equal(agent.tokens.input, 300); assert.equal(agent.tokens.cacheRead, 900);
-  const written = await core.readJSON(join(paths.codexJobsDir(), `${agent.id}.json`));
+  const written = await core.readJSON(join(paths.jobsDir(), `${agent.id}.json`));
   assert.equal(written.status, 'completed'); assert.equal(written.threadId, 'synthetic-thread'); assert(written.endedAt); assert(written.write); assert.equal(written.taskId, '2');
   // Since contract section 15 the runner appends the "## Findings" request after the task text.
   const sentPrompt = await readFile(env.FAKE_PROMPT, 'utf8');
   assert(sentPrompt.startsWith('\n#2 check\nrun it'), sentPrompt);
   assert.match(sentPrompt, /## Findings/);
-  assert(!(await readdir(paths.codexJobsDir())).some(name => name.endsWith('.tmp')));
+  assert(!(await readdir(paths.jobsDir())).some(name => name.endsWith('.tmp')));
   const resumed = cli('scripts/codex-task.mjs', ['--cwd', cwd, '--resume-last'], '#2 more', env);
   assert.equal(resumed.status, 0, resumed.stderr);
   const resumedArgs = JSON.parse(await readFile(env.FAKE_ARGS, 'utf8'));
@@ -300,9 +300,9 @@ process.stdin.resume();process.stdin.on('end',()=>{console.log(JSON.stringify({t
   const exit = new Promise(resolveExit => child.on('close', resolveExit)), writes = [];
   let finished = false; exit.then(() => { finished = true; });
   while (!finished) {
-    const files = await readdir(paths.codexJobsDir()).catch(() => []);
+    const files = await readdir(paths.jobsDir()).catch(() => []);
     for (const file of files.filter(file => file.endsWith('.json'))) {
-      const value = await core.readJSON(join(paths.codexJobsDir(), file));
+      const value = await core.readJSON(join(paths.jobsDir(), file));
       if (value?.cwd !== paths.canonicalPath(cwd)) continue;
       const encoded = JSON.stringify(value);
       if (writes.at(-1)?.encoded !== encoded) writes.push({ encoded, at: performance.now(), value });
@@ -332,7 +332,7 @@ const fs=require('node:fs');process.stdin.resume();process.on('SIGTERM',()=>{fs.
   assert.equal(await exit, 1);
   assert.equal(await readFile(marker, 'utf8'), 'SIGTERM'); assert.match(stdout, /stopped/);
   const [agent] = await core.collectCodexJobs(cwd); assert.equal(agent.status, 'failed');
-  const value = await core.readJSON(join(paths.codexJobsDir(), `${agent.id}.json`)); assert.equal(value.error, 'stopped'); assert(value.endedAt);
+  const value = await core.readJSON(join(paths.jobsDir(), `${agent.id}.json`)); assert.equal(value.error, 'stopped'); assert(value.endedAt);
 });
 
 test('Codex model precedence is flag, config, environment, default; whitespace before task label is rejected', async t => {
@@ -468,7 +468,7 @@ for (const phase of ['before-spawn', 'during-spawn']) {
       assert.match(result.stdout, /stopped\n\[codex\] #11 failed/);
       const [agent] = await core.collectCodexJobs(cwd);
       assert.equal(agent.status, 'failed');
-      const value = await core.readJSON(join(paths.codexJobsDir(), `${agent.id}.json`));
+      const value = await core.readJSON(join(paths.jobsDir(), `${agent.id}.json`));
       assert.equal(value.error, 'stopped'); assert(value.endedAt);
       if (phase === 'before-spawn') assert.equal(await readFile(env.FAKE_ARGS, 'utf8').catch(error => error.code), 'ENOENT', 'cancelled jobs do not start codex');
     });

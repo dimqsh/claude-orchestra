@@ -28,13 +28,15 @@ function column(text, width, right = false) {
 export function agentActivity(agent) {
   return ['completed', 'failed', 'stopped'].includes(agent.status) ? statusLabels[agent.status] : agent.activity || statusLabels[agent.status] || 'working';
 }
-export function renderRow(row, { width = 100, color = false, prefix = '', columnPrefixWidth = displayWidth(prefix) } = {}) {
+const executorLabel = (row, showModel) => showModel && row.model ? `${cleanText(row.model).replace(/^(?:gpt|claude)-/, '').replace(/-\d{8}$/, '')}${row.effort ? `@${cleanText(row.effort)}` : ''}` : executorName(row.executor);
+export function renderRow(row, { width = 100, color = false, prefix = '', columnPrefixWidth = displayWidth(prefix), showModel = false, executorWidth = Math.max(6, displayWidth(executorLabel(row, showModel))) } = {}) {
   width = normalizedWidth(width);
+  executorWidth = Math.min(14, executorWidth);
   // Reserve the executor/token fields and some activity even on narrow terminals.
-  const labelWidth = Math.max(1, Math.min(Math.round(width * 0.28), width - columnPrefixWidth - 27) - (displayWidth(prefix) - columnPrefixWidth));
+  const labelWidth = Math.max(1, Math.min(Math.round(width * 0.28), width - columnPrefixWidth - 27 - (executorWidth - 6)) - (displayWidth(prefix) - columnPrefixWidth));
   const label = column(firstLine(row.label), labelWidth);
   const glyph = paint(statusGlyphs[row.status] || '○', statusColors[row.status], color);
-  const executor = paint(column(executorName(row.executor), 6), executorColors[row.executor], color);
+  const executor = paint(column(executorLabel(row, showModel), executorWidth), executorColors[row.executor], color);
   const tokens = column(row.tokens?.spent ? formatTokens(row.tokens.spent) : '—', 6, true);
   return truncate(`${prefix}${glyph} ${label} ${executor} ${tokens}   ${cleanText(row.activity)}`, width);
 }
@@ -92,18 +94,23 @@ export function taskHierarchy(tasks) {
 }
 export function renderRows(session, { width = 100, color = false } = {}) {
   const tasks = session.board?.tasks;
-  const rows = tasks ? taskHierarchy(tasks) : (session.agents || []).map((task, index, agents) => ({ task, prefix: index === agents.length - 1 ? '╰─ ' : '├─ ' }));
+  const rows = (tasks ? taskHierarchy(tasks) : (session.agents || []).map((task, index, agents) => ({ task, prefix: index === agents.length - 1 ? '╰─ ' : '├─ ' })))
+    .map(({ task, prefix }) => {
+      const open = tasks && (task.attemptList || (Array.isArray(task.attempts) ? task.attempts : [])).findLast(attempt => attempt.outcome === null);
+      return { task: open ? { ...task, executor: open.provider, model: open.model, effort: open.effort } : task, prefix };
+    });
+  const executorWidth = Math.min(14, Math.max(6, ...rows.map(({ task }) => displayWidth(executorLabel(task, !!tasks)))));
   return rows.map(({ task: row, prefix }) => {
     const isTask = !!tasks;
     const agents = isTask ? (session.agents || []).filter(agent => row.agentIds?.includes(agent.id)) : [];
     const active = agents.find(agent => agent.status === 'running') || agents[0];
     let activity = isTask ? (active ? agentActivity(active) : statusLabels[row.status]) : agentActivity(row);
     if (isTask && row.status === 'queued' && row.dependsOn?.length) activity = `waits on ${row.dependsOn.map(id => `#${id}`).join(', ')}`;
-    if (isTask && row.status === 'done') activity = `done${row.attempts > 1 ? ` · ${row.attempts} attempts` : ''}`;
+    if (isTask && row.status === 'done') activity = `done${row.attemptCount > 1 ? ` · ${row.attemptCount} attempts` : ''}`;
     if (isTask && row.merged) activity = 'merged';
     if (isTask && row.note) activity = row.note;
     const label = isTask ? `#${row.id} ${row.title}` : row.description || row.id;
-    return renderRow({ ...row, label, activity }, { width, color, prefix, columnPrefixWidth: 3 });
+    return renderRow({ ...row, label, activity }, { width, color, prefix, columnPrefixWidth: 3, showModel: isTask, executorWidth });
   });
 }
 export function renderSummary(session, { width = 100, color = false } = {}) {
