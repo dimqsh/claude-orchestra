@@ -1,0 +1,10 @@
+{"type":"thread.started","thread_id":"synthetic-thread"}
+{"type":"turn.started"}
+{"type":"item.started","item":{"id":"r1","type":"reasoning","text":"Plan"}}
+{"type":"item.started","item":{"id":"c1","type":"command_execution","command":"pytest -q"}}
+{"type":"item.completed","item":{"id":"f1","type":"file_change","changes":[{"path":"src/cli.py","kind":"update"}]}}
+{"type":"item.completed","item":{"id":"m1","type":"agent_message","text":"Done: tests passed."}}
+{"type":"turn.completed","usage":{"input_tokens":1000,"cached_input_tokens":800,"output_tokens":50}}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"m2","type":"agent_message","text":"Final answer."}}
+{"type":"turn.completed","usage":{"input_tokens":200,"cached_input_tokens":100,"output_tokens":20}}

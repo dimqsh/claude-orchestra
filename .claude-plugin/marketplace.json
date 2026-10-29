@@ -1,0 +1,20 @@
+{
+  "name": "claude-orchestra",
+  "owner": {
+    "name": "dimash"
+  },
+  "metadata": {
+    "description": "Agent orchestration for Claude Code with Opus, Codex and Sonnet and a live board"
+  },
+  "allowCrossMarketplaceDependenciesOn": [
+    "omc"
+  ],
+  "plugins": [
+    {
+      "name": "orchestra",
+      "source": "./plugins/orchestra",
+      "description": "Opus plans and reviews, Codex takes hard subtasks, Sonnet takes easy ones. Live board in the status line, web graph, shared project memory, one git worktree per subtask.",
+      "version": "0.2.0"
+    }
+  ]
+}

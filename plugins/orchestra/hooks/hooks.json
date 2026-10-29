@@ -1,0 +1,17 @@
+{
+  "description": "Orchestra: keeps the installed HUD copy in sync with the plugin",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/install-hud.mjs\" sync --quiet",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
