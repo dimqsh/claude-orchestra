@@ -280,10 +280,16 @@ export async function runBenchCli(argv) {
         const selected = models ? resolveModels(catalog, models) : [];
         if (selected.some(entry => skipped.some(other => other.id === entry.id))) throw new Error('A model cannot be both selected and skipped');
         const own = { skipped: 'not picked', date: new Date().toISOString().slice(0, 10) };
+        const kept = new Set();
         await updateCatalog(current => {
-          for (const entry of skipped) if (current.models[entry.id]) current.models[entry.id].own = own;
+          for (const entry of skipped) {
+            const model = current.models[entry.id];
+            if (!model) continue;
+            if (model.own == null || model.own.skipped) model.own = own;
+            else kept.add(entry.id);
+          }
         });
-        for (const entry of skipped) console.log(`${entry.id}: skipped (not picked)`);
+        for (const entry of skipped) console.log(`${entry.id}: ${kept.has(entry.id) ? 'kept (already benchmarked)' : 'skipped (not picked)'}`);
       }
       return models || auto ? runBenchUnlocked({ models, auto }) : {};
     });

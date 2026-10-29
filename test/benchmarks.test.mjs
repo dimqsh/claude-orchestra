@@ -13,6 +13,7 @@ const aaUrl = 'https://artificialanalysis.ai/api/v2/data/llms/models';
 const benchUrl = 'https://raw.githubusercontent.com/leoncuhk/awesome-llm-bench/main/README.md';
 const aa = JSON.parse(readFileSync(new URL('fixtures/aa-models.json', import.meta.url), 'utf8'));
 const markdown = readFileSync(new URL('fixtures/benchlm/README.md', import.meta.url), 'utf8');
+const liveMarkdown = readFileSync(new URL('fixtures/benchlm/README-2026-10-29.md', import.meta.url), 'utf8');
 const oldDate = '2026-01-01';
 const oldPublic = { source: 'artificialanalysis.ai', date: oldDate, codingIndex: 42, price: { input: 2, output: 8 } };
 const entry = (provider, model, extra = {}) => ({ id: `${provider}:${model}`, provider, model, ...extra });
@@ -64,6 +65,61 @@ function copyPlugin(f) {
   }
   return plugin;
 }
+
+test('recorded live BenchLM strips qualifiers and reads LiveCodeBench', t => {
+  const f = setup(t);
+  const out = f.child(`console.log(JSON.stringify(b.parseBenchLM(${JSON.stringify(liveMarkdown)}, '2026-10-29')));`);
+  assert.equal(out.status, 0, out.stderr); assert.equal(out.stderr, '');
+  const rows = JSON.parse(out.stdout);
+  assert.ok(rows.length > 0);
+  assert.ok(rows.every(row => !row.name.includes('(')));
+  assert.equal(rows.find(row => row.name === 'Solar Pro 4').data.livecodebench, 87.8);
+  assert.equal(rows.find(row => row.name === 'Claude Opus 4.7').data.swebench, 87.6);
+});
+
+test('BenchLM qualifiers map exactly and duplicate metrics keep the highest score in either order', t => {
+  for (const scores of [[94.2, 91.7], [91.7, 94.2]]) {
+    const f = setup(t);
+    const table = `### SWE-bench Verified\n
+| Rank | Model | Provider | License | Score |
+| 1 | GPT-6.1 Sol (Max) | OpenAI | Closed | ${scores[0]}% |
+| 2 | GPT-6.1 Sol (High) | OpenAI | Closed | ${scores[1]}% |
+| 3 | GPT-6 Sol | OpenAI | Closed | 99.0% |
+| 4 | (Max) | OpenAI | Closed | 100.0% |
+| 5 | GPT-6.1 Sol (Max) (High) | OpenAI | Closed | 100.0% |
+### Terminal-Bench 2.0\n
+| Rank | Model | Provider | License | Score |
+| 1 | GPT-6.1 Sol (High) | OpenAI | Closed | 77.3% |`;
+    const out = f.run('const result = await b.refreshBenchmarks({ fetch: fakeFetch, key: "" });', { benchText: table });
+    assert.equal(out.catalog.models['codex:gpt-6.1-sol'].public.swebench, 94.2);
+    assert.equal(out.catalog.models['codex:gpt-6.1-sol'].public.terminalbench, 77.3);
+    assert.deepEqual(out.result.matched, ['codex:gpt-6.1-sol']);
+    const mismatch = f.run('const result = await b.refreshBenchmarks({ force: true, fetch: fakeFetch, key: "" });', {
+      benchText: table.replaceAll('GPT-6.1 Sol', 'GPT-6 Sol'),
+    });
+    assert.deepEqual(mismatch.result.matched, [], 'GPT-6 Sol must never match GPT-6.1 Sol');
+  }
+});
+
+test('missing or malformed optional LiveCodeBench keeps required metrics; required sections still fail', t => {
+  const withoutLive = liveMarkdown.replace(/### LiveCodeBench\n[\s\S]*?(?=^### Terminal-Bench 2\.0)/m, '');
+  for (const text of [withoutLive, withoutLive + '\n### LiveCodeBench\nChanged layout',
+    withoutLive + '\n### LiveCodeBench\n| Rank | Model | Provider | License | Score |\n| 1 | bad | x | Open | invalid |']) {
+    const f = setup(t, { models: { 'codex:gpt-5.3-codex': entry('codex', 'gpt-5.3-codex') } });
+    const out = f.run('const result = await b.refreshBenchmarks({ fetch: fakeFetch, key: "" });', { benchText: text });
+    assert.equal(out.catalog.models['codex:gpt-5.3-codex'].public.swebench, 85);
+    assert.equal(out.catalog.models['codex:gpt-5.3-codex'].public.terminalbench, 77.3);
+    assert.deepEqual(out.result.source, ['benchlm.ai']);
+  }
+  for (const heading of ['SWE-bench Verified', 'Terminal-Bench 2.0']) {
+    const f = setup(t);
+    const out = f.run('const result = await b.refreshBenchmarks({ fetch: fakeFetch, key: "" });', {
+      benchText: liveMarkdown.replace(`### ${heading}\n`, '### Changed heading\n'),
+    });
+    assert.deepEqual(out.result.source, []);
+    assert.ok(out.result.warnings.includes('benchlm.ai: invalid response'));
+  }
+});
 
 test('missing or malformed aliases never break matching or models discover', t => {
   for (const content of [undefined, '{ malformed', 'null', '{"aliases":null}', '{"aliases":[]}', '{"aliases":{"sonnet-5-5":{"toString":null}}}']) {

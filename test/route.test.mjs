@@ -18,7 +18,7 @@ const entry = (provider, model, value, price, extra = {}) => ({
 });
 const catalog = (...entries) => ({ models: Object.fromEntries(entries.map(e => [e.id, e])) });
 const candidates = () => catalog(
-  entry('gemini', 'weak', 70, 0.1),
+  entry('codex', 'weak', 70, 0.1),
   entry('claude', 'cheap', 85, 0.5),
   entry('codex', 'step', 90, 2),
   entry('codex', 'best', 100, 20),
@@ -54,7 +54,7 @@ test('rung 1 is the cheapest candidate at or above 85% of the best', t => {
   const input = candidates();
   // Even inside a cost class, the cheaper actual blended price wins over the higher score.
   input.models['claude:cheap'].public.price = { input: 0, output: 2 }; // 3:1 blend = 0.5
-  input.models['gemini:near'] = entry('gemini', 'near', 89, 0.8);
+  input.models['codex:near'] = entry('codex', 'near', 89, 0.8);
   const rows = f.run(`r.ladder('bug', ${JSON.stringify(input)}, {}, {})`);
   assert.equal(rows[0].rung, 1);
   assert.equal(rows[0].id, 'claude:cheap');
@@ -72,7 +72,7 @@ test('rung 1 is the cheapest candidate at or above 85% of the best', t => {
 test('rung 2 is at least 5 points higher or one cost class up', t => {
   const f = fixture(t);
   for (const [value, price] of [[90, 0.8], [86, 2], [80, 2]]) {
-    const input = catalog(entry('claude', 'cheap', 85, 0.5), entry('gemini', 'near', 89, 0.6),
+    const input = catalog(entry('claude', 'cheap', 85, 0.5), entry('codex', 'near', 89, 0.6),
       entry('codex', 'step', value, price), entry('codex', 'best', 100, 20));
     const rows = f.run(`r.ladder('bug', ${JSON.stringify(input)}, {}, {})`);
     assert.equal(rows[1].rung, 2);
@@ -89,15 +89,15 @@ test('rung 2 is at least 5 points higher or one cost class up', t => {
 
 test('a provider above 90% is marked low limit and skipped for rung 1', t => {
   const f = fixture(t);
-  const input = catalog(entry('claude', 'cheap', 85, 0.5), entry('gemini', 'safe', 86, 2), entry('codex', 'best', 100, 20));
-  const limits = { claude: [{ usedPercent: 91 }], codex: [{ usedPercent: 1 }, { usedPercent: 95 }] };
+  const input = catalog(entry('claude', 'cheap', 85, 0.5), entry('codex', 'safe', 86, 2), entry('claude', 'best', 100, 20));
+  const limits = { claude: [{ usedPercent: 91 }] };
   const rows = f.run(`r.ladder('bug', ${JSON.stringify(input)}, ${JSON.stringify(limits)}, {})`);
-  assert.equal(rows[0].id, 'gemini:safe');
-  assert.equal(rows.at(-1).id, 'codex:best');
+  assert.equal(rows[0].id, 'codex:safe');
+  assert.equal(rows.at(-1).id, 'claude:best');
   assert.equal(rows.at(-1).lowLimit, true);
   const at90 = f.run(`r.ladder('bug', ${JSON.stringify(input)}, { claude: [{ usedPercent: 90 }] }, {})`);
   assert.equal(at90[0].id, 'claude:cheap');
-  const allLow = f.run(`r.ladder('bug', ${JSON.stringify(catalog(entry('codex', 'best', 100, 20)))}, ${JSON.stringify(limits)}, {})`);
+  const allLow = f.run(`r.ladder('bug', ${JSON.stringify(catalog(entry('codex', 'best', 100, 20)))}, { codex: [{ usedPercent: 1 }, { usedPercent: 95 }] }, {})`);
   assert.equal(allLow.some(row => row.rung === 1), false);
   assert.equal(allLow.at(-1).rung, 3);
   assert.equal(allLow.at(-1).lowLimit, true);
@@ -106,7 +106,7 @@ test('a provider above 90% is marked low limit and skipped for rung 1', t => {
 test('history with 5 tasks overrides public scores, using the fraction from history()', t => {
   const f = fixture(t);
   const a = entry('codex', 'a', 80, 0.5, { own: { byType: { bug: { passed: 1, total: 1 } } } });
-  const b = entry('gemini', 'b', 70, 2);
+  const b = entry('codex', 'b', 70, 2);
   const history = { [a.id]: { bug: { tasks: 5, firstTry: 2 / 5, avgTokens: 100 } },
     [b.id]: { bug: { tasks: 5, firstTry: 1, avgTokens: null } } };
   const out = f.run(`({ a: r.score(${JSON.stringify(a)}, 'bug', h), b: r.score(${JSON.stringify(b)}, 'bug', h),
@@ -221,7 +221,7 @@ test('brief output is at most 20 lines, contains evidence and one limits line, a
 });
 
 test('brief reads real board history and remains read-only with an empty or unavailable catalog', t => {
-  const a = entry('codex', 'a', 80, 0.5), b = entry('gemini', 'b', 70, 2);
+  const a = entry('codex', 'a', 80, 0.5), b = entry('codex', 'b', 70, 2);
   const f = fixture(t, catalog(a, b));
   const boards = join(f.store, 'boards'); mkdirSync(boards);
   writeFileSync(join(boards, 'history.json'), JSON.stringify({ tasks: [a, b].flatMap(model =>
@@ -230,7 +230,7 @@ test('brief reads real board history and remains read-only with an empty or unav
   const before = readFileSync(join(f.store, 'models.json'), 'utf8');
   const out = f.brief(['--types', 'bug']);
   assert.equal(out.status, 0, out.stderr); assert.equal(out.stderr, '');
-  assert.match(out.stdout, /^bug .*gemini:b.*history 5 tasks, 100% first try/m);
+  assert.match(out.stdout, /^bug .*codex:b.*history 5 tasks, 100% first try/m);
   assert.doesNotMatch(out.stdout, /codex:a/);
   assert.equal(readFileSync(join(f.store, 'models.json'), 'utf8'), before);
   writeFileSync(join(f.store, 'models.json'), JSON.stringify(catalog({ ...a, available: { ok: false } })));
@@ -246,7 +246,7 @@ test('brief reads real board history and remains read-only with an empty or unav
 test('rung 2 cannot downgrade when a safe rung 1 ties the low-limit best', t => {
   const f = fixture(t);
   const input = catalog(entry('codex', 'limited', 90, 0.1), entry('claude', 'safe', 90, 0.5),
-    entry('gemini', 'downgrade', 85, 2));
+    entry('codex', 'downgrade', 85, 2));
   const rows = f.run(`r.ladder('bug', ${JSON.stringify(input)}, { codex: [{ usedPercent: 95 }] }, {})`);
   assert.deepEqual(rows.map(row => [row.rung, row.id]), [[1, 'claude:safe'], [3, 'codex:limited']]);
 });
@@ -276,7 +276,7 @@ test('one own pass without public data uses the neutral prior and cannot leapfro
   const f = fixture(t);
   const unknown = entry('codex', 'unknown', null, 0.5, { public: null,
     own: { byType: { bug: { passed: 1, total: 1 } } } });
-  const input = catalog(unknown, entry('claude', 'a', 61, 0.1), entry('gemini', 'b', 70, 2),
+  const input = catalog(unknown, entry('claude', 'a', 61, 0.1), entry('codex', 'b', 70, 2),
     entry('codex', 'best', 79, 20));
   const rows = f.run(`r.ladder('bug', ${JSON.stringify(input)}, {}, {})`);
   const row = rows.find(row => row.id === unknown.id);
@@ -290,7 +290,7 @@ test('an even-sized cohort prints its neutral prior rounded to one decimal while
   const f = fixture(t);
   const unknown = entry('codex', 'unknown', null, 0.5, { public: null,
     own: { byType: { bug: { passed: 1, total: 1 } } } });
-  const input = catalog(unknown, entry('claude', 'a', 61.3, 0.1), entry('gemini', 'b', 70.1, 2));
+  const input = catalog(unknown, entry('claude', 'a', 61.3, 0.1), entry('codex', 'b', 70.1, 2));
   const row = f.run(`r.ladder('bug', ${JSON.stringify(input)}, {}, {})`).find(row => row.id === unknown.id);
   assert.match(row.score.evidence, /neutral prior 65\.7$/);
   // The score keeps the unrounded median: 61.3 and 70.1 average to 65.69999999999999.
@@ -299,33 +299,30 @@ test('an even-sized cohort prints its neutral prior rounded to one decimal while
 
 test('one primary public metric prevents a lone SWE-bench figure from outranking AA evidence', t => {
   const f = fixture(t);
-  const lone = entry('gemini', 'swe-only', null, 0.5, {
+  const lone = entry('codex', 'swe-only', null, 0.5, {
     public: { source: 'benchlm.ai', date, swebench: 99, price: { input: 0.5, output: 0.5 } },
   });
   const input = catalog(entry('codex', 'a', 61, 0.1), entry('claude', 'b', 70, 2),
     entry('codex', 'best', 79, 20), lone);
   const rows = f.run(`r.ladder('bug', ${JSON.stringify(input)}, {}, {})`);
-  const row = rows.find(row => row.id === lone.id);
-  assert.equal(row.score.value, 70);
-  assert.match(row.score.evidence, /neutral prior 70/);
-  assert.doesNotMatch(row.score.evidence, /SWE-bench 99/);
+  assert.equal(rows.some(row => row.id === lone.id), false);
+  assert.deepEqual(f.run(`r.untested('bug', ${JSON.stringify(input)}, {}, {})`), [lone.id]);
   assert.equal(rows.at(-1).id, 'codex:best');
 });
 
-test('without AA, the most-covered metric is SWE-bench and Terminal-Bench-only uses its median', t => {
+test('without AA, the most-covered metric is SWE-bench and Terminal-Bench-only is untested', t => {
   const f = fixture(t);
   const a = entry('codex', 'a', null, 0.5, { public: { source: 'benchlm.ai', date, swebench: 70,
     price: { input: 0.5, output: 0.5 } } });
   const best = entry('claude', 'best', null, 20, { public: { source: 'benchlm.ai', date, swebench: 80,
     price: { input: 20, output: 20 } } });
-  const other = entry('gemini', 'terminal-only', null, 0.8, { public: { source: 'benchlm.ai', date, terminalbench: 99,
+  const other = entry('codex', 'terminal-only', null, 0.8, { public: { source: 'benchlm.ai', date, terminalbench: 99,
     price: { input: 0.8, output: 0.8 } } });
   const excluded = entry('codex', 'offline', 100, 0, { available: { ok: false } });
   const input = catalog(a, best, other, excluded, entry('claude', 'opus', 100, 0), entry('claude', 'fable', 100, 0));
   const rows = f.run(`r.ladder('bug', ${JSON.stringify(input)}, {}, {})`);
-  const row = rows.find(row => row.id === other.id);
-  assert.equal(row.score.value, 75);
-  assert.match(row.score.evidence, /neutral prior 75/);
+  assert.equal(rows.some(row => row.id === other.id), false);
+  assert.deepEqual(f.run(`r.untested('bug', ${JSON.stringify(input)}, {}, {})`), [other.id]);
   assert.equal(rows.at(-1).id, best.id);
   assert.match(rows.at(-1).score.evidence, /BenchLM SWE-bench 80/);
 });
@@ -397,7 +394,87 @@ test('route import and brief tolerate missing or malformed aliases; cost default
       process.argv = [process.execPath, 'models.mjs', 'brief', '--types', 'bug'];
       await import(${JSON.stringify(copiedCLI)});`);
     assert.equal(brief.status, 0, brief.stderr); assert.equal(brief.stderr, '');
-    assert.match(brief.stdout, /^bug .*codex:subscription.*\$\$/m);
+    assert.match(brief.stdout, /^bug no evidence yet$/m);
+    assert.match(brief.stdout, /^untested: codex:subscription \(models.mjs bench --models codex:subscription\)$/m);
     assert.match(brief.stdout, /^Limits:/m);
   }
+});
+
+test('only evidence-backed models form rungs; all other eligible models are untested', t => {
+  const known = entry('codex', 'known', 70, 20);
+  const unknown = ['a', 'b', 'c'].map(model => entry('claude', model, null, 0.1, { public: null }));
+  const input = catalog(known, ...unknown);
+  const f = fixture(t, input);
+  const rows = f.run(`r.ladder('bug', ${JSON.stringify(input)}, {}, {})`);
+  assert.deepEqual(rows.map(row => [row.rung, row.id, row.score.value]), [[1, known.id, 70]]);
+  assert.deepEqual(f.run(`r.untested('bug', ${JSON.stringify(input)}, {}, {})`), unknown.map(model => model.id));
+  known.public = null;
+  assert.deepEqual(f.run(`r.ladder('bug', ${JSON.stringify(input)}, {}, {})`), []);
+  assert.deepEqual(f.run(`r.untested('bug', ${JSON.stringify(input)}, {}, {})`), [known, ...unknown].map(model => model.id));
+});
+
+test('own and history observations count as evidence for their type using the score sample count', t => {
+  const own = entry('codex', 'own', null, 0.5, { public: null, own: { byType: { bug: { passed: 1, total: 1 } } } });
+  const historical = entry('claude', 'history', null, 20, { public: null });
+  const invalid = entry('codex', 'invalid', null, 0.1, { public: null, own: { byType: { bug: { passed: 2, total: 1 } } } });
+  const input = catalog(own, historical, invalid), f = fixture(t, input);
+  const past = { [historical.id]: { bug: { tasks: 1, firstTry: 1 } }, [invalid.id]: { bug: { tasks: 2, firstTry: 2 } } };
+  const ownRows = f.run(`r.ladder('bug', ${JSON.stringify(catalog(own))}, {}, {})`);
+  assert.equal(ownRows[0].id, own.id);
+  assert.equal(ownRows[0].score.value, 60);
+  assert.match(ownRows[0].score.evidence, /own 1\/1/);
+  const historyRows = f.run(`r.ladder('bug', ${JSON.stringify(catalog(historical))}, {}, ${JSON.stringify(past)})`);
+  assert.equal(historyRows[0].id, historical.id);
+  assert.equal(historyRows[0].score.value, 60);
+  assert.match(historyRows[0].score.evidence, /history 1 tasks/);
+  assert.deepEqual(f.run(`r.untested('bug', ${JSON.stringify(input)}, {}, ${JSON.stringify(past)})`), [invalid.id]);
+  assert.deepEqual(f.run(`r.ladder('docs', ${JSON.stringify(input)}, {}, ${JSON.stringify(past)})`), []);
+  assert.deepEqual(f.run(`r.untested('docs', ${JSON.stringify(input)}, {}, ${JSON.stringify(past)})`), [own.id, historical.id, invalid.id]);
+});
+
+test('unsupported providers never affect the primary metric, neutral prior, rungs or untested list', t => {
+  const own = entry('codex', 'own', null, 0.5, { public: null, own: { byType: { bug: { passed: 1, total: 1 } } } });
+  const supported = entry('claude', 'supported', null, 20, { public: { swebench: 70 } });
+  const unknown = entry('codex', 'unknown', null, 0.1, { public: null });
+  const input = catalog(own, supported, unknown, entry('gemini', 'known', 90, 0.1),
+    entry('gemini', 'unknown', null, 0.1, { public: null }), entry('other', 'known', 100, 0));
+  const f = fixture(t, input);
+  const rows = f.run(`r.ladder('bug', ${JSON.stringify(input)}, {}, {})`);
+  const ownRow = rows.find(row => row.id === own.id);
+  assert.equal(ownRow.score.value, 76);
+  assert.match(ownRow.score.evidence, /neutral prior 70/);
+  assert.ok(rows.every(row => /^(codex|claude):/.test(row.id)));
+  assert.deepEqual(f.run(`r.untested('bug', ${JSON.stringify(input)}, {}, {})`), [unknown.id]);
+});
+
+test('brief with no evidence prints six type messages, one untested line and limits', t => {
+  const input = catalog(entry('claude', 'haiku', null, null, { public: null }),
+    entry('codex', 'new', null, null, { public: null }), entry('gemini', 'unknown', null, null, { public: null }));
+  const f = fixture(t, input), out = f.brief();
+  assert.equal(out.status, 0, out.stderr); assert.equal(out.stderr, '');
+  const lines = out.stdout.trimEnd().split('\n');
+  assert.deepEqual(lines.slice(0, 6), ['bug', 'logic', 'refactor', 'tests', 'docs', 'search'].map(type => `${type} no evidence yet`));
+  assert.equal(lines[6], 'untested: claude:haiku, codex:new (models.mjs bench --models claude:haiku,codex:new)');
+  assert.match(lines[7], /^Limits:/);
+  assert.equal(lines.length, 8);
+  assert.doesNotMatch(out.stdout, /neutral prior|no available models|gemini:/);
+});
+
+test('brief lists only models untested for every shown type and stays within 20 lines', t => {
+  const input = candidates();
+  const partial = entry('codex', 'partial', null, 2, { public: null, own: { byType: { bug: { passed: 1, total: 1 } } } });
+  const unknown = entry('claude', 'untested', null, null, { public: null });
+  input.models[partial.id] = partial; input.models[unknown.id] = unknown;
+  const f = fixture(t, input), out = f.brief();
+  assert.equal(out.status, 0, out.stderr); assert.equal(out.stderr, '');
+  const lines = out.stdout.trimEnd().split('\n');
+  assert.equal(lines.length, 20);
+  assert.equal(lines.at(-2), 'untested: claude:untested (models.mjs bench --models claude:untested)');
+  assert.match(lines.at(-1), /^Limits:/);
+  const docs = f.brief(['--types', 'docs']);
+  assert.equal(docs.status, 0, docs.stderr); assert.equal(docs.stderr, '');
+  assert.match(docs.stdout, /^untested: codex:partial, claude:untested \(models.mjs bench --models codex:partial,claude:untested\)$/m);
+  const known = fixture(t, candidates()).brief();
+  assert.equal(known.status, 0, known.stderr); assert.equal(known.stderr, '');
+  assert.doesNotMatch(known.stdout, /^untested:/m);
 });

@@ -424,6 +424,26 @@ test('CLI --skip records not-picked entries and --new never runs them', async t 
   }
 });
 
+test('CLI --skip preserves benchmark results and reports kept entries with clean output', async t => {
+  const byType = { bug: { passed: 1, total: 1, tokens: 512, seconds: 2 } };
+  const measured = { date: '2026-10-01', partial: false, byType };
+  const partial = { date: '2026-10-02', partial: { reason: 'token cap' }, byType };
+  const f = await sandbox(t, [entry('codex', 'done', { own: measured }), entry('claude', 'partial', { own: partial }),
+    entry('codex', 'new'), entry('codex', 'skipped', { own: { skipped: 'old reason', date: '2026-01-01' } })]);
+  const child = spawnSync(process.execPath, ['--input-type=module', '-e', `
+    import { runBenchCli } from ${JSON.stringify(benchUrl)};
+    process.exitCode = await runBenchCli(['--skip', 'done,partial,new,skipped']);
+  `], { env: f.env, encoding: 'utf8', timeout: 10000 });
+  assert.equal(child.status, 0, child.stderr); assert.equal(child.stderr, '');
+  assert.equal(child.stdout, 'codex:done: kept (already benchmarked)\nclaude:partial: kept (already benchmarked)\ncodex:new: skipped (not picked)\ncodex:skipped: skipped (not picked)\n');
+  const catalog = JSON.parse(await readFile(join(f.home, 'models.json'), 'utf8'));
+  assert.deepEqual(catalog.models['codex:done'].own, measured);
+  assert.deepEqual(catalog.models['claude:partial'].own, partial);
+  for (const id of ['codex:new', 'codex:skipped']) {
+    assert.deepEqual(catalog.models[id].own, { skipped: 'not picked', date: new Date().toISOString().slice(0, 10) });
+  }
+});
+
 test('a concurrent benchmark process exits zero and reports the owning pid', async t => {
   const f = await sandbox(t);
   const first = spawn(process.execPath, ['--input-type=module', '-e', `
