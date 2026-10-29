@@ -26,9 +26,9 @@ function setup(t, { oauth = true, env = {} } = {}) {
   const childEnv = { ...process.env, HOME: home, ORCHESTRA_HOME: store, CLAUDE_CONFIG_DIR: claude, CODEX_HOME: join(root, 'codex'),
     PATH: `${bin}:${dirname(process.execPath)}:/usr/bin:/bin`, DISCOVERY_LOG: log,
     CODEX_LIST_ERROR: '', CODEX_PROBE_ERROR: '', CODEX_MODELS: '', GEMINI_PROBE_ERROR: '', ...env };
-  const run = body => JSON.parse(execFileSync(process.execPath, ['--input-type=module', '-e',
+  const run = (body, options = {}) => JSON.parse(execFileSync(process.execPath, ['--input-type=module', '-e',
     `import * as d from ${JSON.stringify(discoverUrl)}; import * as c from ${JSON.stringify(catalogUrl)}; ${body}`],
-  { env: childEnv, encoding: 'utf8' }).trim());
+  { env: childEnv, encoding: 'utf8', ...options }).trim());
   return { root, store, claude, bin, env: childEnv, run,
     calls: () => { try { return readFileSync(log, 'utf8').trim().split('\n').map(JSON.parse); } catch { return []; } },
     seed: value => writeFileSync(join(store, 'models.json'), JSON.stringify({ version: 1, models: {}, ...value })),
@@ -142,7 +142,7 @@ test('probes run one at a time', t => {
   const f = setup(t);
   f.seed({ models: { 'gemini:gemini-3-pro': { provider: 'gemini', model: 'gemini-3-pro', public: { source: 'fixture', date: '2026-10-28' } } } });
   f.run('await d.discover(); console.log("{}");');
-  const calls = f.calls(); assert.ok(calls.length >= 8);
+  const calls = f.calls().filter(x => x.stage !== 'stdin-eof'); assert.ok(calls.length >= 8);
   for (let i = 0; i < calls.length; i += 2) {
     assert.equal(calls[i].stage, 'start'); assert.equal(calls[i + 1].stage, 'end');
     assert.deepEqual(calls[i].args, calls[i + 1].args);
@@ -249,4 +249,88 @@ test('models dispatcher rejects unknown commands and options with a single Engli
     assert.match(out.stderr, /^Error: Usage: models.mjs [^\n]+\n$/);
   }
   assert.equal(f.calls().length, 0);
+});
+
+test('Codex probes end stdin so the CLI can reach stdin EOF', t => {
+  const f = setup(t);
+  const out = f.run(`
+    import { execFile } from 'node:child_process';
+    // Keep a regression bounded: without EOF the actual fake blocks until this timeout.
+    const runner = (file, args, options, callback) => execFile(file, args, { ...options, timeout: 1000 }, callback);
+    console.log(JSON.stringify(await d.probe({ provider: 'codex', model: 'gpt-6.1-sol' }, { runner })));`);
+  assert.ok(f.calls().some(x => x.stage === 'stdin-eof'), 'fake Codex must read stdin to EOF');
+  assert.equal(out.ok, true, out.error);
+});
+
+test('Codex probes skip the git trust check in a directory outside a repository', t => {
+  const f = setup(t);
+  const out = f.run(`console.log(JSON.stringify(await d.probe({ provider: 'codex', model: 'gpt-6.1-sol' })));`, { cwd: f.root });
+  assert.equal(out.ok, true, out.error);
+  assert.deepEqual(f.calls().find(x => x.stage === 'start').args,
+    ['exec', '-m', 'gpt-6.1-sol', '-s', 'read-only', '--skip-git-repo-check', 'Reply OK']);
+});
+
+for (const error of ['', 'auth expired']) {
+  test(`Gemini probes run once per day even with --force: ${error || 'success'}`, t => {
+    const f = setup(t, { env: { GEMINI_PROBE_ERROR: error } });
+    f.seed({ models: { 'gemini:gemini-3-pro': { provider: 'gemini', model: 'gemini-3-pro', public: { source: 'fixture', date: '2026-10-28' } } } });
+    const initial = f.run('await d.discover(); console.log(JSON.stringify((await c.readCatalog()).models["gemini:default"].available));');
+    const starts = () => f.calls().filter(x => x.command === 'gemini' && x.stage === 'start');
+    assert.equal(starts().length, 2);
+    const forced = spawnSync(process.execPath, [cli, 'discover', '--force'], { env: f.env, encoding: 'utf8' });
+    assert.equal(forced.status, 0, forced.stderr);
+    assert.equal(starts().length, 2, 'default and named models each keep their daily probe budget');
+    const cached = f.run('console.log(JSON.stringify((await c.readCatalog()).models["gemini:default"].available));');
+    assert.deepEqual(cached, initial, 'reuse must preserve checkedAt as well as the result');
+    f.env.GEMINI_PROBE_ERROR = '';
+    f.run(`await c.updateCatalog(x => {
+      x.discoveredAt = new Date(Date.now() - 25 * 3600000).toISOString();
+      for (const model of Object.values(x.models)) if (model.provider === 'gemini') model.available.checkedAt = x.discoveredAt;
+    }); console.log("{}");`);
+    const refreshed = f.run('await d.discover(); console.log(JSON.stringify((await c.readCatalog()).models["gemini:default"].available));');
+    assert.equal(starts().length, 4); assert.equal(refreshed.ok, true);
+  });
+}
+
+for (const failure of ['listing', 'not listed', 'missing executable']) {
+  test(`Codex non-probe failure does not prevent a forced probe after recovery: ${failure}`, t => {
+    const f = setup(t);
+    const originalPath = f.env.PATH;
+    f.run('await d.discover(); console.log("{}");');
+    if (failure === 'listing') f.env.CODEX_LIST_ERROR = 'codex logged out';
+    if (failure === 'not listed') f.env.CODEX_MODELS = JSON.stringify({ models: [] });
+    if (failure === 'missing executable') { rmSync(join(f.bin, 'codex')); f.env.PATH = f.bin; }
+    const failed = f.run('await d.discover({ force: true }); console.log(JSON.stringify((await c.readCatalog()).models["codex:gpt-6.1-sol"].available));');
+    assert.equal(failed.ok, false);
+    if (failure === 'listing') assert.equal(failed.error, 'codex logged out');
+    if (failure === 'not listed') assert.equal(failed.error, 'not listed by codex debug models');
+    if (failure === 'missing executable') assert.match(failed.error, /ENOENT/);
+    f.env.CODEX_LIST_ERROR = ''; f.env.CODEX_MODELS = ''; f.env.PATH = originalPath;
+    if (failure === 'missing executable') {
+      copyFileSync(new URL('fixtures/bin/codex-models', import.meta.url), join(f.bin, 'codex'));
+      chmodSync(join(f.bin, 'codex'), 0o755);
+    }
+    const recovered = f.run('await d.discover({ force: true }); console.log(JSON.stringify((await c.readCatalog()).models["codex:gpt-6.1-sol"].available));');
+    assert.equal(recovered.ok, true, recovered.error);
+    assert.equal(f.calls().filter(x => x.stage === 'start' && x.args[0] === 'exec').length, 2);
+  });
+}
+
+test('a recent failed Codex model probe is reused by forced discovery', t => {
+  const f = setup(t, { env: { CODEX_PROBE_ERROR: 'model access denied' } });
+  const initial = f.run('await d.discover(); console.log(JSON.stringify((await c.readCatalog()).models["codex:gpt-6.1-sol"].available));');
+  assert.equal(initial.ok, false); assert.equal(initial.error, 'model access denied');
+  f.env.CODEX_PROBE_ERROR = '';
+  const cached = f.run('await d.discover({ force: true }); console.log(JSON.stringify((await c.readCatalog()).models["codex:gpt-6.1-sol"].available));');
+  assert.deepEqual(cached, initial);
+  assert.equal(f.calls().filter(x => x.stage === 'start' && x.args[0] === 'exec').length, 1);
+});
+
+test('missing Gemini credentials do not consume the daily probe budget', t => {
+  const f = setup(t, { oauth: false });
+  f.run('await d.discover(); console.log("{}");');
+  mkdirSync(join(f.env.HOME, '.gemini')); writeFileSync(join(f.env.HOME, '.gemini/oauth_creds.json'), '{}');
+  const out = f.run('await d.discover({ force: true }); console.log(JSON.stringify((await c.readCatalog()).models["gemini:default"].available));');
+  assert.equal(out.ok, true);
+  assert.equal(f.calls().filter(x => x.command === 'gemini' && x.stage === 'start').length, 1);
 });
