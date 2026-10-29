@@ -1,6 +1,6 @@
 # Executor discovery and routing
 
-Status: design, awaiting approval · 2026-10-29
+Status: approved by the user · 2026-10-29
 
 ## Intent
 
@@ -40,6 +40,12 @@ Opus decides; the plugin supplies information, not routing rules.
   BenchLM as the keyless fallback, a 6-task own benchmark, and the user's board history overriding
   both once a model has 5 or more tasks of a type.
 - **Opus picks models itself**, without asking the user to approve the plan.
+- **Fable is off by default** because it costs more. It becomes a hand only when the user sets
+  `allowFable: true` in `~/.claude/orchestra/config.json`.
+- **The final reviewer is always Opus 5.5.** When the orchestrating session runs on Opus 5.5, it
+  reviews itself. When it runs on another model, the final review and the accept/rework verdicts go
+  to a read-only `Agent` with `model: "opus"`. The skill checks the session model at step 0 and
+  says which case applies.
 - **Remaining limits matter:** Claude (5-hour and weekly windows) and Codex (weekly window).
 
 ## Goals
@@ -116,7 +122,7 @@ Runs at most once a day (the result is cached), plus when the user runs `/orches
 
 | Provider | How models are listed | How access is checked |
 |---|---|---|
-| Claude | The Agent tool aliases `haiku`, `sonnet`, `fable`, resolved to concrete versions from `message.model` in recent transcripts. `opus` is the orchestrator and is never a hand. | Always available inside Claude Code; no probe |
+| Claude | The Agent tool aliases `haiku` and `sonnet` (`fable` only with `allowFable: true`), resolved to concrete versions from `message.model` in recent transcripts. `opus` is the orchestrator and reviewer and is never a hand. | Always available inside Claude Code; no probe |
 | Codex | `codex debug models` (JSON with slug, description, visibility and supported efforts; only `visibility: list` entries). `~/.codex/models_cache.json` is not used: an old app-server process can leave it stale, as it is on this machine today. | `codex exec -m <model> -s read-only "Reply OK"`, once per new or changed model |
 | Gemini | Public catalog entries from the Gemini family, intersected with what the CLI accepts | `gemini -m <model> -p "Reply OK"` once; skipped when `~/.gemini/oauth_creds.json` is missing |
 | Kimi | `kimi -m <model>` candidates from the public catalog | `kimi --print -p "Reply OK"` once; a login or subscription error means "not available" and no further probes until the next day |
@@ -241,8 +247,8 @@ only those run.
 
 ## Designer's calls (the user did not decide these; check them)
 
-- Opus is never a hand; `fable` is a hand, usually the top rung for `bug`, `logic` and `refactor`
-  when the Claude limits allow it.
+- The top rung, when Fable is off, is the strongest available GPT model at high effort (today
+  `gpt-6-astra` or `gpt-6.1-sol`, whichever scores higher for the task type).
 - The candidate ladder in section 7: 85% bar for rung 1, `low limit` above 90% of a window.
 - Sub-agents only when the brief allows them and names their model.
 - Codex models come from `codex debug models`, not from the CLI's cache file.
