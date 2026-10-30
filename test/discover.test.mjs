@@ -277,8 +277,9 @@ test('Codex probes end stdin so the CLI can reach stdin EOF', t => {
   const f = setup(t);
   const out = f.run(`
     import { execFile } from 'node:child_process';
-    // Keep a regression bounded: without EOF the actual fake blocks until this timeout.
-    const runner = (file, args, options, callback) => execFile(file, args, { ...options, timeout: 1000 }, callback);
+    // Keep a regression bounded: without EOF the actual fake blocks until this timeout. It is generous
+    // because starting the fake node script can take several seconds on a busy machine.
+    const runner = (file, args, options, callback) => execFile(file, args, { ...options, timeout: 15000 }, callback);
     console.log(JSON.stringify(await d.probe({ provider: 'codex', model: 'gpt-6.1-sol' }, { runner })));`);
   assert.ok(f.calls().some(x => x.stage === 'stdin-eof'), 'fake Codex must read stdin to EOF');
   assert.equal(out.ok, true, out.error);

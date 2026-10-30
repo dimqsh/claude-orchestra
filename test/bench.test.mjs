@@ -37,7 +37,7 @@ async function sandbox(t, entries = [entry('codex', 'sample')], config = {}) {
         await cp(join(${JSON.stringify(references)}, type), request.cwd, { recursive: true });
         return { code: 0, stdout: '[codex] #B-' + type + ' done · 512 tokens · 0m2s\\n', stderr: '' };
       };
-      ${body}`], { env, encoding: 'utf8', timeout: 60000 });
+      ${body}`], { env, encoding: 'utf8', timeout: 180000 });
     assert.equal(child.status, 0, childDiagnostics(child));
     assert.equal(child.stderr, '');
     return JSON.parse(child.stdout.trim().split('\n').at(-1));
@@ -280,7 +280,7 @@ test('CLI --models and --new execute a fake Claude CLI on PATH with fresh repos'
   const run = argv => spawnSync(process.execPath, ['--input-type=module', '-e', `
     import { runBenchCli } from ${JSON.stringify(benchUrl)};
     process.exitCode = await runBenchCli(${JSON.stringify(argv)});`],
-  { env: { ...f.env, PATH: `${bin}:/usr/bin:/bin` }, encoding: 'utf8', timeout: 60000 });
+  { env: { ...f.env, PATH: `${bin}:/usr/bin:/bin` }, encoding: 'utf8', timeout: 180000 });
   for (const [argv, output] of [
     [['--new'], 'claude:sonnet: done\n'], [['--new'], ''], [['--models', 'sonnet'], 'claude:sonnet: done\n']
   ]) {
@@ -548,11 +548,21 @@ test('CLI --skip replaces an empty runner-error partial and --new no longer runs
   assert.deepEqual(catalog.models['claude:sonnet'].own, { skipped: 'not picked', date: new Date().toISOString().slice(0, 10) });
 });
 
+test('CHECK_TIMEOUT exceeds the tests fixture check running node --test once plus once per mutant', async t => {
+  const source = await readFile(join(plugin, 'bench', 'tests', 'check.mjs'), 'utf8');
+  const inner = Number(source.match(/timeout:\s*(\d+)/)[1]);
+  const mutants = source.match(/for \(const body of \[(.*)\]\)/)[1].match(/'[^']*'/g).length;
+  const runs = 1 + mutants;
+  const f = await sandbox(t);
+  const { checkTimeout } = f.run(`console.log(JSON.stringify({ checkTimeout: bench.CHECK_TIMEOUT }));`);
+  assert.ok(checkTimeout > runs * inner, `CHECK_TIMEOUT ${checkTimeout} must exceed ${runs} runs x ${inner} ms`);
+});
+
 for (const mode of ['timeout', 'signal']) {
   test(`a check killed by ${mode} is a runner error without a scored model failure`, async t => {
     const f = await sandbox(t);
     const out = f.run(`import { writeFile } from 'node:fs/promises';
-      const result = await bench.runBench({ models: ['sample'], runner: async request => {
+      const result = await bench.runBench({ models: ['sample'], checkTimeout: 5000, runner: async request => {
         await writeFile(join(request.cwd, 'basket.mjs'), ${JSON.stringify(mode === 'timeout'
           ? "await new Promise(resolve => setTimeout(resolve, 60000));"
           : "process.kill(process.pid, 'SIGTERM'); await new Promise(resolve => setTimeout(resolve, 60000));")});

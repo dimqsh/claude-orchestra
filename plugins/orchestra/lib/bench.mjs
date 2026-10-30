@@ -12,6 +12,8 @@ import { orchestraConfig, orchestraHome } from './paths.mjs';
 const TYPES = ['bug', 'logic', 'refactor', 'tests', 'docs', 'multi'];
 const CAP = 150000;
 const MODEL_TIMEOUT = 10 * 60_000;
+// Must exceed the fixture checks' own bounds: the tests check runs up to five 10 s `node --test` runs.
+export const CHECK_TIMEOUT = 120_000;
 const fixtures = fileURLToPath(new URL('../bench/', import.meta.url));
 const codexScript = fileURLToPath(new URL('../scripts/codex-task.mjs', import.meta.url));
 
@@ -168,7 +170,7 @@ function measuredUsage(entry, response, type, elapsed) {
   return { tokens, seconds };
 }
 
-async function runTask(entry, type, runner) {
+async function runTask(entry, type, runner, checkTimeout) {
   const fixture = join(fixtures, type);
   const cwd = await mkdtemp(join(tmpdir(), 'orchestra-bench-'));
   try {
@@ -179,7 +181,7 @@ async function runTask(entry, type, runner) {
     const started = performance.now();
     const response = await runner(requestFor(entry, cwd, input));
     const usage = measuredUsage(entry, response, type, (performance.now() - started) / 1000);
-    const check = await commandRunner({ command: process.execPath, args: [join(fixture, 'check.mjs'), cwd], cwd, timeout: 10000 });
+    const check = await commandRunner({ command: process.execPath, args: [join(fixture, 'check.mjs'), cwd], cwd, timeout: checkTimeout });
     if (check.signal || check.code === null) throw runnerFailure('check timed out', usage.tokens);
     return { passed: check.code === 0 ? 1 : 0, total: 1, ...usage };
   } finally { await rm(cwd, { recursive: true, force: true }); }
@@ -200,7 +202,7 @@ function progress(own) {
   return { byType, completed };
 }
 
-async function runBenchUnlocked({ models, auto = false, cap = CAP, runner = commandRunner } = {}) {
+async function runBenchUnlocked({ models, auto = false, cap = CAP, runner = commandRunner, checkTimeout = CHECK_TIMEOUT } = {}) {
   if (!Number.isSafeInteger(cap) || cap <= 0) throw new Error('Benchmark cap must be a positive integer');
   const entries = selectModels(await readCatalog(), models, auto);
   const results = {};
@@ -222,7 +224,7 @@ async function runBenchUnlocked({ models, auto = false, cap = CAP, runner = comm
       }
       attempted = true;
       try {
-        const score = await runTask(entry, type, runner);
+        const score = await runTask(entry, type, runner, checkTimeout);
         addScore(byType, type, score);
         completed.add(type);
         tokens += score.tokens;
