@@ -1,6 +1,6 @@
 ---
 name: board
-description: Opens the live orchestra agent graph (Opus, Codex, Sonnet, tasks, tokens) in a browser and prints the ASCII board in the chat. Run manually with /orchestra:board.
+description: Opens the live orchestra agent graph (agents, models, tasks, tokens) in a browser and prints the ASCII board in the chat. Run manually with /orchestra:board.
 disable-model-invocation: true
 ---
 

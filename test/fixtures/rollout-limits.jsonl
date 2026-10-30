@@ -1,0 +1,5 @@
+{"type":"session_meta","payload":{"id":"limits-fixture"}}
+{"type":"event_msg","payload":{"type":"token_count","info":null,"rate_limits":{"primary":{"used_percent":3,"window_minutes":10080,"resets_at":1793404800}}}}
+{"type":"event_msg","payload":{"type":"token_count","info":null,"rate_limits":{"primary":{"used_percent":8.0,"window_minutes":10080,"resets_at":1793404800}}}}
+{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"total_tokens":100}},"rate_limits":null}}
+{"type":"event_msg","payload":{"type":"other","rate_limits":{"primary":{"used_percent":99,"window_minutes":300}}}}

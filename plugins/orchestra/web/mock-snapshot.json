@@ -66,7 +66,7 @@
           "kind": "codex",
           "type": "codex",
           "executor": "codex",
-          "model": "gpt-6.1-sol",
+          "model": "gpt-6.1",
           "description": "#2.1 CSV parsing",
           "taskId": "2.1",
           "status": "completed",
@@ -102,23 +102,43 @@
           }
         },
         {
-          "id": "a7e41c90d2b83f56",
-          "kind": "claude",
-          "type": "general-purpose",
-          "executor": "opus",
-          "model": "claude-opus-4-7",
+          "id": "job-m4jz8w-c4",
+          "kind": "codex",
+          "type": "codex",
+          "executor": "codex",
+          "model": "gpt-6.1-sol",
           "description": "#3 export schema",
           "taskId": "3",
           "status": "completed",
           "startedAt": "2026-10-29T12:27:10.000Z",
           "endedAt": "2026-10-29T12:33:05.000Z",
-          "activity": "Read export.py",
+          "activity": "editing export.py",
           "tokens": {
-            "input": 1800,
-            "cacheWrite": 6900,
-            "cacheRead": 120000,
-            "output": 1400,
+            "input": 9100,
+            "cacheWrite": 0,
+            "cacheRead": 44000,
+            "output": 1000,
             "spent": 10100
+          }
+        },
+        {
+          "id": "a3d18f60c2e95b47",
+          "kind": "claude",
+          "type": "general-purpose",
+          "executor": "haiku",
+          "model": "claude-haiku-4-5",
+          "description": "#3 export schema",
+          "taskId": "3",
+          "status": "failed",
+          "startedAt": "2026-10-29T12:23:40.000Z",
+          "endedAt": "2026-10-29T12:25:50.000Z",
+          "activity": "Bash pytest -q",
+          "tokens": {
+            "input": 600,
+            "cacheWrite": 1500,
+            "cacheRead": 15000,
+            "output": 200,
+            "spent": 2300
           }
         },
         {
@@ -151,8 +171,23 @@
             "id": "1",
             "title": "sorting bug",
             "executor": "codex",
+            "model": "gpt-6.1-sol",
+            "effort": "high",
+            "type": "bug",
             "status": "running",
-            "attempts": 1,
+            "attemptCount": 1,
+            "attemptList": [
+              {
+                "n": 1,
+                "provider": "codex",
+                "model": "gpt-6.1-sol",
+                "effort": "high",
+                "startedAt": "2026-10-29T12:38:02.000Z",
+                "endedAt": null,
+                "outcome": null,
+                "tokens": null
+              }
+            ],
             "dependsOn": [],
             "note": "",
             "updatedAt": "2026-10-29T12:38:02.000Z",
@@ -174,8 +209,33 @@
             "id": "2",
             "title": "export csv/json",
             "executor": "sonnet",
+            "model": "sonnet",
+            "effort": null,
+            "type": "logic",
             "status": "running",
-            "attempts": 2,
+            "attemptCount": 2,
+            "attemptList": [
+              {
+                "n": 1,
+                "provider": "sonnet",
+                "model": "sonnet",
+                "effort": null,
+                "startedAt": "2026-10-29T12:22:30.000Z",
+                "endedAt": "2026-10-29T12:26:40.000Z",
+                "outcome": "failed",
+                "tokens": 10200
+              },
+              {
+                "n": 2,
+                "provider": "sonnet",
+                "model": "sonnet",
+                "effort": null,
+                "startedAt": "2026-10-29T12:39:00.000Z",
+                "endedAt": null,
+                "outcome": null,
+                "tokens": null
+              }
+            ],
             "dependsOn": [],
             "note": "first attempt failed on encoding",
             "updatedAt": "2026-10-29T12:39:00.000Z",
@@ -198,8 +258,23 @@
             "id": "2.1",
             "title": "CSV parsing",
             "executor": "codex",
+            "model": "gpt-6.1-sol",
+            "effort": "medium",
+            "type": "logic",
             "status": "review",
-            "attempts": 1,
+            "attemptCount": 1,
+            "attemptList": [
+              {
+                "n": 1,
+                "provider": "codex",
+                "model": "gpt-6.1",
+                "effort": "medium",
+                "startedAt": "2026-10-29T12:35:10.000Z",
+                "endedAt": null,
+                "outcome": null,
+                "tokens": null
+              }
+            ],
             "dependsOn": [],
             "note": "waiting for parser review",
             "updatedAt": "2026-10-29T12:39:40.000Z",
@@ -220,32 +295,73 @@
           {
             "id": "3",
             "title": "export schema",
-            "executor": "opus",
+            "executor": "codex",
+            "model": "gpt-6.1-sol",
+            "effort": "high",
+            "type": "refactor",
             "status": "done",
-            "attempts": 1,
+            "attemptCount": 2,
+            "attemptList": [
+              {
+                "n": 1,
+                "provider": "haiku",
+                "model": "haiku",
+                "effort": null,
+                "startedAt": "2026-10-29T12:23:40.000Z",
+                "endedAt": "2026-10-29T12:25:50.000Z",
+                "outcome": "failed",
+                "tokens": 2300
+              },
+              {
+                "n": 2,
+                "provider": "codex",
+                "model": "gpt-6.1-sol",
+                "effort": "high",
+                "startedAt": "2026-10-29T12:27:10.000Z",
+                "endedAt": "2026-10-29T12:33:05.000Z",
+                "outcome": "accepted",
+                "tokens": 10100
+              }
+            ],
             "dependsOn": [],
-            "note": "schema accepted",
+            "note": "accepted after escalating from Haiku to Codex",
             "updatedAt": "2026-10-29T12:33:05.000Z",
             "parentId": null,
             "branch": "orchestra/export-k3x9/3",
             "merged": true,
             "tokens": {
-              "input": 1800,
-              "cacheWrite": 6900,
-              "cacheRead": 120000,
-              "output": 1400,
-              "spent": 10100
+              "input": 9700,
+              "cacheWrite": 1500,
+              "cacheRead": 59000,
+              "output": 1200,
+              "spent": 12400
             },
             "agentIds": [
-              "a7e41c90d2b83f56"
+              "a3d18f60c2e95b47",
+              "job-m4jz8w-c4"
             ]
           },
           {
             "id": "4",
             "title": "export tests",
             "executor": "sonnet",
+            "model": "sonnet",
+            "effort": null,
+            "type": "tests",
             "status": "rework",
-            "attempts": 1,
+            "attemptCount": 1,
+            "attemptList": [
+              {
+                "n": 1,
+                "provider": "sonnet",
+                "model": "sonnet",
+                "effort": null,
+                "startedAt": "2026-10-29T12:31:40.000Z",
+                "endedAt": "2026-10-29T12:37:55.000Z",
+                "outcome": "rework",
+                "tokens": 9800
+              }
+            ],
             "dependsOn": [
               "2"
             ],
@@ -269,13 +385,44 @@
             "id": "5",
             "title": "docstrings",
             "executor": "sonnet",
+            "model": "sonnet",
+            "effort": null,
+            "type": "docs",
             "status": "queued",
-            "attempts": 0,
+            "attemptCount": 0,
+            "attemptList": [],
             "dependsOn": [
               "4"
             ],
             "note": "",
             "updatedAt": "2026-10-29T12:22:10.000Z",
+            "parentId": null,
+            "branch": null,
+            "merged": false,
+            "tokens": {
+              "input": 0,
+              "cacheWrite": 0,
+              "cacheRead": 0,
+              "output": 0,
+              "spent": 0
+            },
+            "agentIds": []
+          },
+          {
+            "id": "6",
+            "title": "changelog entry",
+            "executor": "kimi",
+            "model": "kimi-k2",
+            "effort": null,
+            "type": "docs",
+            "status": "queued",
+            "attemptCount": 0,
+            "attemptList": [],
+            "dependsOn": [
+              "5"
+            ],
+            "note": "",
+            "updatedAt": "2026-10-29T12:21:30.000Z",
             "parentId": null,
             "branch": null,
             "merged": false,
@@ -298,16 +445,17 @@
       },
       "totals": {
         "byExecutor": {
-          "opus": 28300,
+          "opus": 18200,
           "sonnet": 29400,
-          "codex": 32150
+          "codex": 42250,
+          "haiku": 2300
         },
-        "spent": 89850,
+        "spent": 92150,
         "tasks": {
           "done": 1,
           "running": 3,
           "review": 1,
-          "queued": 1,
+          "queued": 2,
           "failed": 0
         }
       },

@@ -54,9 +54,9 @@ async function fixture(t, overrides = {}) {
     FAKE_PROMPT: join(root, 'prompt'), FAKE_ARGS: join(root, 'args'), FAKE_FINISH: join(root, 'finish'), ...overrides };
   const children = new Set();
   async function jobs() {
-    const names = await readdir(join(home, 'codex-jobs')).catch(() => []);
+    const names = await readdir(join(home, 'jobs')).catch(() => []);
     return Promise.all(names.filter(name => name.endsWith('.json')).map(async name =>
-      JSON.parse(await readFile(join(home, 'codex-jobs', name), 'utf8'))));
+      JSON.parse(await readFile(join(home, 'jobs', name), 'utf8'))));
   }
   t.after(async () => {
     await writeFile(env.FAKE_FINISH, 'finish');

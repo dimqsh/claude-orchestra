@@ -1,0 +1,2 @@
+#B-docs Document the slug API
+Replace README.md with concise documentation for slug(text) from slug.mjs. Include its import path ./slug.mjs, lowercase and trim behavior, non-ASCII/alphanumeric runs becoming a single hyphen, removal of edge hyphens, empty-input result, and TypeError for non-string input. Include runnable examples slug(" Hello, World! ") yielding "hello-world" and slug("!!!") yielding "". Keep slug.mjs unchanged.

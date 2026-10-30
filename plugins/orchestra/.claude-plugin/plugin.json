@@ -1,7 +1,7 @@
 {
   "name": "orchestra",
-  "version": "0.2.0",
-  "description": "Agent orchestration: Opus plans and reviews, Codex (gpt-6.1-sol) takes hard subtasks, Sonnet takes easy ones. Live board in the status line, web graph, shared project memory, one git worktree per subtask.",
+  "version": "0.3.0",
+  "description": "Agent orchestration: Opus plans and reviews, and each subtask goes to the cheapest model that scores well enough for its type, picked from a catalog of Claude and Codex models. Live board in the status line, web graph, shared project memory, one git worktree per subtask.",
   "author": {
     "name": "dimash"
   },

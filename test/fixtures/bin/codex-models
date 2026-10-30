@@ -1,0 +1,30 @@
+#!/usr/bin/env node
+const { appendFileSync } = require('node:fs');
+const { basename } = require('node:path');
+const args = process.argv.slice(2);
+const command = basename(process.argv[1]);
+function log(stage) {
+  if (process.env.DISCOVERY_LOG) appendFileSync(process.env.DISCOVERY_LOG,
+    JSON.stringify({ command, args, stage, time: Date.now() }) + '\n');
+}
+log('start');
+async function main() {
+  if (args[0] === 'exec' && !process.stdin.isTTY) {
+    for await (const chunk of process.stdin) { /* Like Codex, wait for all piped prompt input. */ }
+    log('stdin-eof');
+  }
+  await new Promise(resolve => setTimeout(resolve, 30));
+  log('end');
+  if (command !== 'codex') { console.error('must never be probed'); process.exitCode = 1; return; }
+  if (JSON.stringify(args) === JSON.stringify(['debug', 'models'])) {
+    if (process.env.CODEX_LIST_ERROR) { console.error(process.env.CODEX_LIST_ERROR); process.exitCode = 1; return; }
+    console.log(process.env.CODEX_MODELS || JSON.stringify({ models: [
+      { slug: 'gpt-6.1-sol', description: 'Codex hand', visibility: 'list', supported_reasoning_levels: [{ effort: 'low' }, { effort: 'high' }] },
+      { slug: 'gpt-reserve', visibility: 'hide', supported_reasoning_levels: [{ effort: 'medium' }] },
+    ] }));
+  } else if (args[0] === 'exec' && args[1] === '-m' && args[3] === '-s' && args[4] === 'read-only' && args.at(-1) === 'Reply OK' && args.length === 7 && args[5] === '--skip-git-repo-check') {
+    if (process.env.CODEX_PROBE_ERROR) { console.error(process.env.CODEX_PROBE_ERROR); process.exitCode = 1; }
+    else console.log('OK');
+  } else { console.error('unexpected codex arguments'); process.exitCode = 1; }
+}
+main().catch(error => { console.error(error.message); process.exitCode = 1; });
